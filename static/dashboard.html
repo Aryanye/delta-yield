@@ -1632,8 +1632,11 @@ function paintAge(){
     // The previous logic waited for the age to cross 5 minutes AND 45 seconds
     // of no interaction — so simply looking at the page prevented it from ever
     // refreshing, and the numbers just aged in front of you.
-    let lastTouch=Date.now();
-    ["click","keydown","touchstart","scroll","mousemove"].forEach(ev=>
+    // Deliberately NOT mousemove: a cursor resting over the page fires it
+    // continuously, so counting it as "interaction" means the idle test never
+    // passes and the page never refreshes. Only real engagement counts.
+    let lastTouch=0;
+    ["click","keydown","touchstart","scroll"].forEach(ev=>
       window.addEventListener(ev, ()=>{lastTouch=Date.now();}, {passive:true}));
 
     async function checkForNewData(){
@@ -1652,7 +1655,7 @@ function paintAge(){
       // which case offer it rather than yanking the view away.
       const busy=document.querySelector(".drawer.open, .modal.on");
       const idleSec=(Date.now()-lastTouch)/1000;
-      if(!busy && idleSec>=8){ hardReload(); return; }
+      if(!busy && idleSec>=4){ hardReload(); return; }
       const btn=document.getElementById("refreshBtn");
       if(btn && !btn.dataset.newdata){
         btn.dataset.newdata="1";
