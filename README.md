@@ -144,6 +144,20 @@ For a **guaranteed** 5-minute cadence with no dependence on GitHub's scheduler
 at all, the repo needs to be public: that unlocks unlimited Actions minutes, and
 a single long-running job can then loop internally instead of relying on cron.
 
+### Why 5 minutes, and not less
+
+Two independent hard limits, either of which alone rules out a 1-minute refresh:
+
+| Limit | Number |
+|---|---|
+| A full sweep against Kite's **1 req/s** quote limit (59 batches + 170 margin batches) | **~155 s** per cycle |
+| **Vercel Hobby: 100 deployments/day**. Market hours are 375 min | 5 min = 75/day · 3 min = 125/day · 1 min = 375/day |
+
+So the floor is ~3 minutes physically and 5 minutes practically. Going faster
+would need Vercel Pro *and* a restructured collector — and the page is ~800 KB
+gzipped, so a 1-minute poll would cost a phone ~48 MB/hour for data that moves
+very little in 60 seconds.
+
 ### Cost and cadence
 
 Actions minutes are the constraint, not money:
