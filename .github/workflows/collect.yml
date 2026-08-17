@@ -1,39 +1,48 @@
 name: Collect and publish
 
-# Runs on GitHub's infrastructure, so the public dashboard keeps updating with
-# the laptop asleep, shut, or switched off.
+# ONE long-running job per session that loops internally, instead of asking
+# cron to fire 25 separate times.
 #
-# Timing note: cron here is BEST EFFORT. GitHub queues scheduled workflows and
-# under load they can start 5-20 minutes late, so treat "*/5" as "roughly every
-# 5-10 minutes", not a guarantee. The published page always states its own age,
-# so a late run shows up honestly rather than passing as current.
+# Why: GitHub queues scheduled workflows at low priority and drops them under
+# load. On a nominal 30-minute schedule the observed gaps were 18, 37, 50 and
+# then 76 minutes, with two runs never starting at all. Cron is only asked to
+# start the job now, not to keep time, so a dropped trigger costs one restart
+# rather than one refresh.
+#
+# Free because the repository is public: ~6 hours/day of runner time would blow
+# through the 2,000 free minutes on a private repo, but public repos have
+# unlimited Actions minutes.
 on:
   schedule:
-    # 03:45-10:05 UTC == 09:15-15:35 IST, Mon-Fri. The job re-checks IST market
-    # hours itself and exits in seconds when closed.
-    # NOTE: */30 keeps a PRIVATE repo inside the 2,000 free minutes/month
-    # (~1,525 used). A 5-minute cadence costs ~9,150 min/month, which is free
-    # only on a PUBLIC repo. Flip to "*/5 3-10 * * 1-5" once the repo is public.
-    # Deliberately NOT on :00/:30. Those are the most contended minutes on
-    # GitHub's scheduler and the runs that got dropped were all on them.
-    - cron: "7,22,37,52 3-10 * * 1-5"
+    # 03:40 UTC == 09:10 IST, five minutes before the open.
+    - cron: "40 3 * * 1-5"
+    # Restarts every two hours. Two purposes: if the first trigger was dropped
+    # or the job died, this revives it; and because a running job holds the
+    # secret values it started with, a restart is also how a Kite token you
+    # refreshed mid-morning gets picked up.
+    - cron: "40 5 * * 1-5"
+    - cron: "40 7 * * 1-5"
+    - cron: "40 9 * * 1-5"
   workflow_dispatch:
     inputs:
       force:
-        description: "Run even when the market is closed"
+        description: "Run one cycle even when the market is closed"
         type: boolean
         default: false
 
 concurrency:
-  # Never let a slow run overlap the next one -- two collectors would compete
-  # for the same Kite rate limit and both would crawl.
   group: collect
-  cancel-in-progress: false
+  # A scheduled restart should REPLACE the running job, otherwise it would be
+  # skipped and the job would keep using stale secrets all day.
+  cancel-in-progress: true
 
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    # Market is 09:15-15:30 IST. A job starting at 09:10 needs ~6h20m; the
+    # ceiling for a GitHub-hosted runner is 6h, and the two-hourly restarts
+    # cover the remainder.
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
 
@@ -45,7 +54,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Collect, render and deploy
+      - name: Collect and publish on a loop
         env:
           KITE_API_KEY: ${{ secrets.KITE_API_KEY }}
           KITE_ACCESS_TOKEN: ${{ secrets.KITE_ACCESS_TOKEN }}
@@ -54,22 +63,29 @@ jobs:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python cloud_cycle.py ${{ inputs.force && '--force' || '' }}
+          # 5 minutes is the floor, set by two independent limits: a full sweep
+          # takes ~155s against Kite's 1 req/s quote limit, and Vercel's Hobby
+          # plan allows 100 deployments/day (5 min = 75/day, 3 min = 125/day).
+          LOOP_INTERVAL_SECONDS: "300"
+        run: |
+          if [ "${{ inputs.force }}" = "true" ]; then
+            python cloud_cycle.py --force
+          else
+            python cloud_cycle.py --loop
+          fi
 
-      - name: Report a dead Kite session
+      - name: Report a failure
         if: failure()
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          # The overwhelmingly likely cause of a red run is the overnight token
-          # expiry, so say so rather than leaving a silent failed build.
           if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
             curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
               -d chat_id="$TELEGRAM_CHAT_ID" \
               -d parse_mode=HTML \
               --data-urlencode text="<b>Delta Yield — cloud run failed</b>
-          The scheduled collection did not complete. Most likely the Kite token expired overnight.
-          Sign in on your Mac and run: ./push_token.sh
-          Run log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" >/dev/null || true
+          Collection stopped. Most likely the Kite token expired overnight.
+          Sign in on your Mac (the token is relayed automatically), or run ./push_token.sh
+          Log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" >/dev/null || true
           fi

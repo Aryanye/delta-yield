@@ -120,21 +120,8 @@ def check_vercel_token() -> None:
     log(f"vercel token ok for project {info.get('name')}")
 
 
-def main() -> int:
-    force = "--force" in sys.argv
-    mkt = queries.market_status()
-    if not mkt["open"] and not force:
-        log(f"market closed ({mkt['now']}) — nothing to do")
-        return 0
-
-    check_vercel_token()      # fail in seconds, not after a full collection
-    db.init()
-    load_watchlist()
-
-    kite = kite_from_env()
-    uni = universe_mod.build_universe()
-    log(f"universe: {len(uni.stocks)} stocks, {len(uni.options)} contracts")
-
+def one_cycle(kite, uni) -> None:
+    """Collect, price structures, render and deploy exactly once."""
     from collector import collect
     result = collect(kite, uni, log=log)
     log(f"collected {result['rows']} rows, {result['margined']} with margin")
@@ -155,7 +142,53 @@ def main() -> int:
         (config.PUBLISH_DIR / "vercel.json").write_text(src.read_text())
 
     deploy_to_vercel()
-    return 0
+
+
+def main() -> int:
+    import time as _time
+    force = "--force" in sys.argv
+    loop = "--loop" in sys.argv
+    interval = float(os.environ.get("LOOP_INTERVAL_SECONDS", 300))
+
+    mkt = queries.market_status()
+    if not mkt["open"] and not force and not loop:
+        log(f"market closed ({mkt['now']}) — nothing to do")
+        return 0
+
+    check_vercel_token()      # fail in seconds, not after a full collection
+    db.init()
+    load_watchlist()
+    kite = kite_from_env()
+    uni = universe_mod.build_universe()
+    log(f"universe: {len(uni.stocks)} stocks, {len(uni.options)} contracts")
+
+    if not loop:
+        one_cycle(kite, uni)
+        return 0
+
+    # Loop mode: keep time ourselves for the whole session.
+    log(f"loop mode: a cycle every {interval:.0f}s until the close")
+    failures = 0
+    while True:
+        if not queries.market_status()["open"]:
+            log("market closed — loop finished")
+            return 0
+        started = _time.time()
+        try:
+            one_cycle(kite, uni)
+            failures = 0
+        except Exception as exc:
+            failures += 1
+            log(f"cycle failed ({failures}): {type(exc).__name__}: {str(exc)[:120]}")
+            # A dead token fails every cycle identically; bail out so the run
+            # goes red and the Telegram alert fires, rather than spinning
+            # silently for hours.
+            if failures >= 3:
+                raise
+        elapsed = _time.time() - started
+        sleep_for = max(20.0, interval - elapsed)
+        log(f"next cycle in {sleep_for:.0f}s (cycle took {elapsed:.0f}s)")
+        _time.sleep(sleep_for)
 
 
 if __name__ == "__main__":

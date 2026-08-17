@@ -118,7 +118,7 @@ MAX_RETRIES = 3
 # double-publish.
 PUBLISH_ENABLED = True
 PUBLISH_MODE = "gapfill"          # "always" | "gapfill" | "off"
-PUBLISH_GAPFILL_MINUTES = 11      # publish only if the live page is older
+PUBLISH_GAPFILL_MINUTES = 9       # just above the cloud's 5-min cadence
 # Must sit BELOW the cycle period, or a cycle finishing slightly early gets its
 # publish throttled away and the public page lands on every OTHER cycle.
 PUBLISH_INTERVAL_SECONDS = 210
