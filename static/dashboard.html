@@ -1628,20 +1628,39 @@ function paintAge(){
     paintAge();
     setInterval(paintAge, 15000);
 
-    // Auto-pull the newest deploy while the market is open, but never yank the
-    // page out from under someone who is reading or mid-interaction.
+    // Poll a tiny version marker so a new deploy is picked up within ~30s.
+    // The previous logic waited for the age to cross 5 minutes AND 45 seconds
+    // of no interaction — so simply looking at the page prevented it from ever
+    // refreshing, and the numbers just aged in front of you.
     let lastTouch=Date.now();
-    ["click","keydown","touchstart","scroll"].forEach(ev=>
+    ["click","keydown","touchstart","scroll","mousemove"].forEach(ev=>
       window.addEventListener(ev, ()=>{lastTouch=Date.now();}, {passive:true}));
-    setInterval(()=>{
+
+    async function checkForNewData(){
       const m=(EMB.summary&&EMB.summary.market)||{};
-      const ts=EMB.data_ts||EMB.generated_at;
-      if(!m.open || !ts) return;
-      const ageMin=(Date.now()-new Date(ts).getTime())/60000;
-      const idleSec=(Date.now()-lastTouch)/1000;
+      if(!m.open) return;
+      let v;
+      try{
+        const res=await fetch("version.json?t="+Date.now().toString(36),{cache:"no-store"});
+        if(!res.ok) return;
+        v=await res.json();
+      }catch(e){ return; }
+      const mine=EMB.data_ts||EMB.generated_at;
+      if(!v || !v.data_ts || v.data_ts===mine) return;
+
+      // New data exists. Reload immediately unless something is mid-use, in
+      // which case offer it rather than yanking the view away.
       const busy=document.querySelector(".drawer.open, .modal.on");
-      if(ageMin>=5 && idleSec>45 && !busy) hardReload();
-    }, 30000);
+      const idleSec=(Date.now()-lastTouch)/1000;
+      if(!busy && idleSec>=8){ hardReload(); return; }
+      const btn=document.getElementById("refreshBtn");
+      if(btn && !btn.dataset.newdata){
+        btn.dataset.newdata="1";
+        btn.textContent="New data — tap to load";
+      }
+    }
+    setInterval(checkForNewData, 30000);
+    setTimeout(checkForNewData, 3000);
   } else {
     await refreshSummary();
     defaultExpiry();

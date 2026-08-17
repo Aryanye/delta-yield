@@ -216,6 +216,19 @@ def render(out_path: Optional[Path] = None,
 </html>"""
 
     out_path.write_text(body)
+
+    # A ~100-byte marker beside the page. The page polls THIS, not itself:
+    # re-fetching an 800 KB payload every 30s just to read a timestamp would be
+    # absurd, so the check costs almost nothing and can therefore be frequent.
+    try:
+        (out_path.parent / "version.json").write_text(json.dumps({
+            "data_ts": snap.get("data_ts"),
+            "generated_at": snap.get("generated_at"),
+            "session_ok": snap.get("session_ok"),
+        }))
+    except Exception:
+        pass
+
     size_mb = out_path.stat().st_size / 1e6
     print(f"snapshot written: {out_path}")
     print(f"  {len(snap['rows']):,} contracts · {len(snap['stocks'])} stocks · {size_mb:.2f} MB")
