@@ -1,0 +1,12 @@
+# Never commit secrets or local state.
+.env
+data/
+logs/
+site/
+snapshot.html
+__pycache__/
+*.pyc
+.DS_Store
+
+# Local launchd config: contains absolute home paths, not needed in CI.
+com.aryan.deltayield.plist

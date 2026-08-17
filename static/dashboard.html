@@ -1,0 +1,1662 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Delta Yield — FnO Stock Option Scanner</title>
+<style>
+:root{
+  --ground:#0c0e11; --panel:#12151a; --panel-2:#171b21; --panel-3:#1d222a;
+  --border:#252b34; --border-2:#323a45;
+  --ink:#e7eaef; --ink-2:#aab3c0; --muted:#727d8d; --faint:#4b5563;
+  --accent:#e8a33d; --accent-dim:#8a5f1f;
+  --green:#3fb950; --amber:#d29922; --red:#f85149; --blue:#58a6ff;
+  --font-display:"Avenir Next Condensed","Avenir Next","Helvetica Neue",Helvetica,sans-serif;
+  --font-ui:"Avenir Next","Helvetica Neue",Helvetica,"Segoe UI",sans-serif;
+  --font-mono:ui-monospace,"SF Mono",Menlo,"Cascadia Mono","Roboto Mono",monospace;
+  --r:6px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--ground); color:var(--ink); font-family:var(--font-ui);
+  font-size:13px; line-height:1.45; -webkit-font-smoothing:antialiased;
+  min-height:100vh;
+}
+/* atmosphere: faint vignette + grain, keeps the black from reading as flat */
+body::before{
+  content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
+  background:radial-gradient(1200px 600px at 70% -10%, rgba(232,163,61,.06), transparent 60%),
+             radial-gradient(900px 500px at 10% 110%, rgba(88,166,255,.045), transparent 60%);
+}
+body::after{
+  content:""; position:fixed; inset:0; pointer-events:none; z-index:0; opacity:.028;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+#app{position:relative; z-index:1}
+.mono{font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1}
+.num{font-family:var(--font-mono); font-variant-numeric:tabular-nums; text-align:right; white-space:nowrap}
+
+/* ---------- top bar ---------- */
+header{
+  position:sticky; top:0; z-index:60; background:rgba(12,14,17,.92);
+  backdrop-filter:saturate(160%) blur(12px);
+  border-bottom:1px solid var(--border);
+}
+.bar{display:flex; align-items:center; gap:20px; padding:11px 20px; flex-wrap:wrap}
+.brand{display:flex; align-items:baseline; gap:9px; margin-right:2px}
+.brand .mark{
+  font-family:var(--font-display); font-size:19px; font-weight:600;
+  letter-spacing:.14em; text-transform:uppercase;
+  background:linear-gradient(92deg,var(--accent),#f0d9a8 60%,var(--accent));
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+}
+.brand .sub{font-size:10px; letter-spacing:.2em; text-transform:uppercase; color:var(--faint)}
+.pill{
+  display:inline-flex; align-items:center; gap:6px; padding:3px 10px;
+  border:1px solid var(--border-2); border-radius:100px; font-size:11px;
+  letter-spacing:.06em; text-transform:uppercase; color:var(--ink-2); white-space:nowrap;
+}
+.dot{width:6px; height:6px; border-radius:50%; background:var(--muted); flex:none}
+.dot.live{background:var(--green); box-shadow:0 0 0 0 rgba(63,185,80,.55); animation:pulse 2.4s infinite}
+.dot.warn{background:var(--amber)} .dot.err{background:var(--red)}
+.pill.age.fresh{border-color:var(--green)} .pill.age.aging{border-color:var(--amber)}
+.pill.age.old{border-color:var(--red); color:#ffc4c0}
+#reloadBtn.spin{opacity:.6; pointer-events:none}
+@keyframes pulse{70%{box-shadow:0 0 0 7px rgba(63,185,80,0)}100%{box-shadow:0 0 0 0 rgba(63,185,80,0)}}
+.kpis{display:flex; gap:22px; margin-left:auto; flex-wrap:wrap}
+.kpi{display:flex; flex-direction:column; gap:1px; min-width:66px}
+.kpi .k{font-size:9.5px; letter-spacing:.15em; text-transform:uppercase; color:var(--faint)}
+.kpi .v{font-family:var(--font-mono); font-size:15px; font-variant-numeric:tabular-nums; color:var(--ink)}
+.kpi .v.hot{color:var(--accent)}
+button,select,input{font-family:inherit; font-size:12px; color:var(--ink)}
+.btn{
+  background:var(--panel-2); border:1px solid var(--border-2); color:var(--ink-2);
+  padding:5px 12px; border-radius:var(--r); cursor:pointer; transition:.16s;
+  letter-spacing:.04em;
+}
+.btn:hover{border-color:var(--accent); color:var(--accent); background:var(--panel-3)}
+.btn:disabled{opacity:.45; cursor:not-allowed}
+.btn.primary{background:linear-gradient(180deg,#2a2013,#1d1710); border-color:var(--accent-dim); color:var(--accent)}
+
+/* ---------- tabs ---------- */
+nav.tabs{display:flex; gap:2px; padding:0 20px; border-bottom:1px solid var(--border); background:var(--panel)}
+nav.tabs button{
+  background:none; border:none; border-bottom:2px solid transparent; color:var(--muted);
+  padding:9px 16px; cursor:pointer; font-family:var(--font-display);
+  letter-spacing:.13em; text-transform:uppercase; font-size:12px; transition:.16s;
+}
+nav.tabs button:hover{color:var(--ink-2)}
+nav.tabs button.on{color:var(--accent); border-bottom-color:var(--accent)}
+
+/* ---------- controls ---------- */
+.controls{
+  display:flex; gap:14px; align-items:center; flex-wrap:wrap;
+  padding:11px 20px; border-bottom:1px solid var(--border); background:var(--panel);
+}
+.ctl{display:flex; align-items:center; gap:7px}
+/* Mobile-only affordance; the desktop control bar is already fully visible. */
+.ctlbar{display:none}
+.ctl label{font-size:10px; letter-spacing:.13em; text-transform:uppercase; color:var(--faint)}
+select,input[type=text],input[type=number]{
+  background:var(--panel-2); border:1px solid var(--border-2); color:var(--ink);
+  padding:4px 8px; border-radius:var(--r); outline:none;
+}
+select:focus,input:focus{border-color:var(--accent)}
+.seg{display:inline-flex; border:1px solid var(--border-2); border-radius:var(--r); overflow:hidden}
+.seg button{
+  background:var(--panel-2); border:none; color:var(--muted); padding:4px 13px;
+  cursor:pointer; font-size:11.5px; letter-spacing:.07em; transition:.14s;
+}
+.seg button+button{border-left:1px solid var(--border-2)}
+.seg button.on{background:var(--accent); color:#191308; font-weight:600}
+.seg button:not(.on):hover{color:var(--ink); background:var(--panel-3)}
+
+/* ---------- layout ---------- */
+main{padding:16px 20px 60px}
+.hint{color:var(--muted); font-size:11.5px; margin:0 0 12px}
+.hint b{color:var(--ink-2); font-weight:500}
+
+/* ---------- tables ---------- */
+.tablewrap{border:1px solid var(--border); border-radius:8px; overflow:auto; max-height:calc(100vh - 250px); background:var(--panel)}
+table{border-collapse:separate; border-spacing:0; width:100%}
+th{
+  position:sticky; top:0; z-index:20; background:var(--panel-3);
+  font-family:var(--font-display); font-size:10.5px; letter-spacing:.13em;
+  text-transform:uppercase; color:var(--ink-2); font-weight:600;
+  padding:8px 9px; text-align:right; white-space:nowrap;
+  border-bottom:1px solid var(--border-2); user-select:none;
+}
+th.l{text-align:left} th.sortable{cursor:pointer} th.sortable:hover{color:var(--accent)}
+th .arrow{color:var(--accent); font-size:9px}
+td{padding:5px 9px; border-bottom:1px solid rgba(37,43,52,.6); white-space:nowrap}
+tbody tr:hover td{background:rgba(232,163,61,.055)}
+td.l{text-align:left}
+.sticky-l{position:sticky; left:0; z-index:15; background:var(--panel)}
+tbody tr:hover .sticky-l{background:#1b1f26}
+th.sticky-l{z-index:30; background:var(--panel-3)}
+.tick{font-family:var(--font-display); letter-spacing:.06em; font-size:12.5px; color:var(--ink)}
+.chip{display:inline-block; width:7px; height:7px; border-radius:2px; vertical-align:middle}
+.chip.green{background:var(--green)} .chip.amber{background:var(--amber)} .chip.red{background:var(--red)}
+.side-ce{color:var(--blue)} .side-pe{color:var(--accent)}
+.up{color:var(--green)} .down{color:var(--red)} .flat{color:var(--muted)}
+.px{font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:9.5px;
+    display:block; line-height:1.25; margin-top:0; letter-spacing:-.1px; white-space:nowrap}
+.px .lv{color:var(--ink-2)}
+.px .ar{font-size:7.5px; vertical-align:1px}
+.stockcell{display:flex; flex-direction:column; gap:0; min-width:132px}
+.stockcell .co{font-size:9.5px; color:var(--faint); text-transform:uppercase;
+               letter-spacing:.05em; max-width:190px; overflow:hidden;
+               text-overflow:ellipsis; white-space:nowrap}
+.muted{color:var(--muted)} .faint{color:var(--faint)}
+
+/* heat cells */
+td.heat{text-align:right; font-family:var(--font-mono); font-variant-numeric:tabular-nums;
+        cursor:pointer; position:relative; transition:.12s}
+td.heat:hover{outline:1px solid var(--accent); outline-offset:-1px}
+td.heat.empty{color:var(--faint)}
+.legend{display:flex; align-items:center; gap:8px; font-size:10.5px; color:var(--faint);
+        letter-spacing:.1em; text-transform:uppercase; margin:0 0 10px}
+.ramp{display:flex; height:9px; width:190px; border-radius:2px; overflow:hidden; border:1px solid var(--border-2)}
+.ramp i{flex:1}
+
+/* drawer */
+.drawer{
+  position:fixed; top:0; right:0; height:100vh; width:min(430px,94vw); z-index:80;
+  background:var(--panel); border-left:1px solid var(--border-2);
+  box-shadow:-24px 0 60px rgba(0,0,0,.6); transform:translateX(100%);
+  transition:transform .26s cubic-bezier(.4,0,.2,1); overflow-y:auto; padding:18px 20px;
+}
+.drawer.open{transform:translateX(0)}
+.drawer h3{font-family:var(--font-display); letter-spacing:.1em; text-transform:uppercase;
+           font-size:14px; margin:0 0 2px; color:var(--accent)}
+.drawer .close{position:absolute; top:14px; right:16px; background:none; border:none;
+               color:var(--muted); font-size:20px; cursor:pointer; line-height:1}
+.drawer .close:hover{color:var(--ink)}
+.kv{display:grid; grid-template-columns:auto 1fr; gap:5px 14px; margin:14px 0}
+.kv dt{font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--faint); align-self:center}
+.kv dd{margin:0; font-family:var(--font-mono); font-variant-numeric:tabular-nums; text-align:right; color:var(--ink)}
+.bigstat{margin:16px 0 4px; padding:13px 15px; border:1px solid var(--accent-dim); border-radius:8px;
+         background:linear-gradient(180deg,rgba(232,163,61,.10),rgba(232,163,61,.02))}
+.bigstat .k{font-size:9.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--accent)}
+.bigstat .v{font-family:var(--font-mono); font-size:29px; color:var(--ink); line-height:1.1}
+.bigstat .note{font-size:11px; color:var(--ink-2); margin-top:5px; font-family:var(--font-ui)}
+.scrim{position:fixed; inset:0; background:rgba(6,8,10,.55); z-index:70; opacity:0;
+       pointer-events:none; transition:opacity .26s}
+.scrim.on{opacity:1; pointer-events:auto}
+
+.searchwrap{position:relative}
+.searchwrap input{width:210px; padding-left:26px}
+.searchwrap .mag{position:absolute; left:8px; top:50%; transform:translateY(-50%);
+                 color:var(--faint); font-size:12px; pointer-events:none}
+.searchwrap .clr{position:absolute; right:6px; top:50%; transform:translateY(-50%);
+                 background:none; border:none; color:var(--faint); cursor:pointer;
+                 font-size:15px; line-height:1; padding:0 3px}
+.searchwrap .clr:hover{color:var(--ink)}
+.sug{position:absolute; top:calc(100% + 4px); left:0; width:290px; z-index:90;
+     background:var(--panel-3); border:1px solid var(--border-2); border-radius:var(--r);
+     box-shadow:0 12px 34px rgba(0,0,0,.55); overflow:hidden; display:none}
+.sug.on{display:block}
+.sug div{padding:6px 10px; cursor:pointer; display:flex; align-items:baseline; gap:8px}
+.sug div.sel,.sug div:hover{background:rgba(232,163,61,.16)}
+.sug .tk{font-family:var(--font-display); letter-spacing:.05em; color:var(--ink); font-size:12.5px}
+.sug .co{color:var(--muted); font-size:10.5px; text-transform:uppercase; letter-spacing:.06em;
+         white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.sug .none{color:var(--muted); font-style:italic; cursor:default}
+tr.hidden-row{display:none}
+.modal{position:fixed; inset:0; z-index:100; display:none; align-items:center; justify-content:center;
+       background:rgba(6,8,10,.72); backdrop-filter:blur(3px)}
+.modal.on{display:flex}
+.modal .card{background:var(--panel); border:1px solid var(--border-2); border-radius:10px;
+             width:min(560px,92vw); padding:22px 24px; box-shadow:0 30px 70px rgba(0,0,0,.6)}
+.modal h3{font-family:var(--font-display); letter-spacing:.11em; text-transform:uppercase;
+          font-size:15px; margin:0 0 4px; color:var(--accent)}
+.modal p{color:var(--ink-2); font-size:12.5px; line-height:1.6; margin:8px 0}
+.modal ol{color:var(--ink-2); font-size:12.5px; line-height:1.75; padding-left:18px; margin:10px 0}
+.modal input[type=text]{width:100%; margin-top:8px; padding:8px 10px; font-family:var(--font-mono); font-size:11.5px}
+.modal .row{display:flex; gap:10px; justify-content:flex-end; margin-top:16px}
+.modal .msg{font-size:12px; margin-top:10px; min-height:16px}
+.modal .msg.err{color:var(--red)} .modal .msg.ok{color:var(--green)}
+.linkbox{display:block; margin-top:6px; padding:8px 10px; background:var(--panel-2);
+         border:1px solid var(--border); border-radius:var(--r); color:var(--blue);
+         font-family:var(--font-mono); font-size:11px; word-break:break-all; text-decoration:none}
+.linkbox:hover{border-color:var(--accent)}
+.wl{display:flex; flex-wrap:wrap; gap:7px; align-items:center; margin:0 0 14px}
+.wl .tagx{display:inline-flex; align-items:center; gap:7px; padding:5px 9px;
+          border:1px solid var(--border-2); border-radius:100px; background:var(--panel-2);
+          font-family:var(--font-display); letter-spacing:.06em; font-size:12px}
+.wl .tagx b{color:var(--ink); font-weight:600}
+.wl .tagx .mv{font-family:var(--font-mono); font-size:10px}
+.wl .tagx button{background:none; border:none; color:var(--faint); cursor:pointer;
+                 font-size:15px; line-height:1; padding:0 1px}
+.wl .tagx button:hover{color:var(--red)}
+.wl .addbox{position:relative}
+.wl .addbox input{min-width:190px}
+.evsec{margin:0 0 20px}
+.evhead{font-family:var(--font-display); letter-spacing:.13em; text-transform:uppercase;
+        font-size:11.5px; color:var(--ink-2); margin:0 0 9px; display:flex;
+        align-items:center; gap:9px; flex-wrap:wrap}
+.evgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(232px,1fr)); gap:9px}
+.evcard{border:1px solid var(--border-2); border-radius:8px; padding:10px 12px;
+        background:var(--panel); cursor:pointer; transition:.15s}
+.evcard:hover{border-color:var(--accent); background:var(--panel-2)}
+.evcard.noprice{opacity:.62}
+.evcard .top{display:flex; justify-content:space-between; align-items:baseline; gap:8px}
+.evcard .d{font-family:var(--font-mono); font-size:11px; color:var(--accent)}
+.evcard .co{color:var(--faint); font-size:10px; text-transform:uppercase;
+            letter-spacing:.05em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.evcard .why{color:var(--ink-2); font-size:11.5px; margin-top:5px}
+.badge{display:inline-block; padding:1px 6px; border-radius:3px; font-size:9px;
+       letter-spacing:.1em; text-transform:uppercase; border:1px solid var(--border-2);
+       color:var(--muted)}
+.badge.conf{border-color:var(--green); color:var(--green)}
+.badge.est{border-color:var(--faint); color:var(--faint)}
+.badge.inexp{border-color:var(--accent); color:var(--accent)}
+.stratwrap{margin-top:14px}
+.strat{border:1px solid var(--border-2); border-radius:8px; margin-bottom:10px;
+       background:var(--panel); overflow:hidden}
+.strat .sh{display:flex; justify-content:space-between; align-items:center; gap:10px;
+           padding:10px 13px; background:var(--panel-3); flex-wrap:wrap}
+.strat .sh b{font-family:var(--font-display); letter-spacing:.07em; font-size:13px}
+.strat .sb{padding:11px 13px}
+.strat .why{color:var(--muted); font-size:11.5px; margin:0 0 9px}
+.legrow{display:flex; gap:8px; align-items:baseline; font-family:var(--font-mono);
+        font-size:11.5px; padding:3px 0; flex-wrap:wrap}
+.legrow .a{font-weight:600; min-width:38px}
+.legrow .a.sell{color:var(--accent)} .legrow .a.buy{color:var(--blue)}
+.mgrid{display:grid; grid-template-columns:repeat(auto-fit,minmax(112px,1fr));
+       gap:8px; margin-top:10px; padding-top:10px; border-top:1px solid var(--border)}
+.mgrid div{display:flex; flex-direction:column; gap:1px}
+.mgrid .k{font-size:9px; letter-spacing:.12em; text-transform:uppercase; color:var(--faint)}
+.mgrid .v{font-family:var(--font-mono); font-size:13px}
+.risk{color:var(--red)} .ok{color:var(--green)}
+@media (max-width:760px){
+  .evgrid{grid-template-columns:1fr}
+  .strat .sh{padding:9px 11px}
+  .mgrid{grid-template-columns:repeat(2,1fr)}
+}
+.empty-state{padding:60px 20px; text-align:center; color:var(--muted)}
+.empty-state .big{font-family:var(--font-display); font-size:17px; letter-spacing:.1em;
+                  text-transform:uppercase; color:var(--ink-2); margin-bottom:8px}
+code{font-family:var(--font-mono); background:var(--panel-3); padding:2px 6px;
+     border-radius:4px; color:var(--accent); font-size:12px}
+.logbox{font-family:var(--font-mono); font-size:11px; color:var(--muted); background:var(--panel-2);
+        border:1px solid var(--border); border-radius:6px; padding:10px 12px; max-height:210px;
+        overflow:auto; white-space:pre-wrap; margin-top:12px}
+
+/* ==========================================================================
+   MOBILE  (<=760px)
+   Everything here is inside a media query, so the desktop rendering above the
+   breakpoint is untouched. The heatmap stays a table -- 10 delta columns are
+   genuinely tabular and a card layout would destroy the comparison -- but the
+   stock column pins to the left and the grid scrolls under it. The denser
+   record-style tables (Opportunities) become cards, because those rows are
+   read one at a time rather than compared column-wise.
+   ========================================================================== */
+@media (max-width: 760px){
+  body{font-size:14px}
+
+  /* --- header: two compact rows, KPIs scroll horizontally --- */
+  .bar{padding:9px 12px; gap:9px}
+  .brand .mark{font-size:16px; letter-spacing:.1em}
+  .brand .sub{display:none}
+  .kpis{order:3; width:100%; margin-left:0; gap:0;
+        overflow-x:auto; -webkit-overflow-scrolling:touch;
+        scrollbar-width:none; padding-bottom:2px}
+  .kpis::-webkit-scrollbar{display:none}
+  .kpi{min-width:0; flex:0 0 auto; padding-right:16px}
+  .kpi .v{font-size:13.5px}
+  .kpi .k{font-size:8.5px; letter-spacing:.1em}
+  /* Countdown is desktop-only detail; the stamp pill already conveys freshness. */
+  .kpi:last-child{display:none}
+  #refreshBtn, #loginBtn{order:2; padding:6px 11px; min-height:36px; font-size:11.5px;
+                         margin-left:auto}
+  .pill{font-size:10px; padding:3px 8px}
+
+  /* --- tabs: horizontally scrollable, thumb-sized --- */
+  nav.tabs{padding:0 8px; overflow-x:auto; scrollbar-width:none; -webkit-overflow-scrolling:touch}
+  nav.tabs::-webkit-scrollbar{display:none}
+  nav.tabs button{padding:11px 13px; font-size:11.5px; white-space:nowrap; flex:0 0 auto}
+
+  /* --- controls: collapse behind a toggle so data starts near the top --- */
+  .controls{padding:0 12px; display:block; border-bottom:none}
+  .controls.open{padding:10px 12px; border-bottom:1px solid var(--border)}
+  .ctlbar{display:flex !important; align-items:center; gap:10px; padding:9px 0}
+  .ctlbar .btn{min-height:38px}
+  .controls .ctl{display:none}
+  .controls.open .ctl{display:flex; width:100%; justify-content:space-between;
+                      padding:6px 0; border-bottom:1px solid rgba(37,43,52,.5)}
+  .controls.open .ctl:last-child{border-bottom:none}
+  .ctl label{font-size:10.5px}
+  select, input[type=text], input[type=number]{min-height:38px; font-size:15px} /* 15px stops iOS zoom-on-focus */
+  .searchwrap input{width:190px}
+  .sug{width:min(300px, 78vw)}
+
+  main{padding:12px 10px 80px}
+  .hint{font-size:12px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+        overflow:hidden; position:relative}
+  .hint.expanded{-webkit-line-clamp:unset; overflow:visible}
+  .hint::after{content:"  more"; color:var(--accent); font-size:10.5px}
+  .hint.expanded::after{content:"  less"}
+  .legend{flex-wrap:wrap; gap:6px}
+  .ramp{width:120px}
+
+  /* --- heatmap: pinned stock column, scrollable delta grid --- */
+  .tablewrap{max-height:none; border-radius:8px; -webkit-overflow-scrolling:touch}
+  .tablewrap.heat table{min-width:640px}
+  .tablewrap.heat th, .tablewrap.heat td{padding:7px 7px; font-size:12px}
+  .tablewrap.heat .sticky-l{min-width:126px; max-width:126px; padding-right:5px;
+                            box-shadow:6px 0 10px -6px rgba(0,0,0,.75)}
+  .stockcell{min-width:0}
+  .tick{font-size:12px}
+  .px{font-size:8.5px; letter-spacing:-.3px}
+  .px .ar{font-size:7px}
+  /* Lot and margin/lot are reference, not comparison -- drop them on a phone
+     so the delta columns get the width instead. */
+  .tablewrap.heat th:nth-child(2), .tablewrap.heat td:nth-child(2),
+  .tablewrap.heat th:nth-child(3), .tablewrap.heat td:nth-child(3){display:none}
+
+  /* --- record tables become cards --- */
+  table.cards, table.cards thead{display:block}
+  table.cards thead{display:none}
+  table.cards tbody{display:block}
+  table.cards tr{display:grid; grid-template-columns:1fr 1fr; gap:2px 10px;
+                 padding:11px 12px; border-bottom:1px solid var(--border);
+                 background:var(--panel)}
+  table.cards td{display:flex; justify-content:space-between; align-items:baseline;
+                 border:none; padding:3px 0; font-size:12.5px; white-space:nowrap}
+  table.cards td::before{content:attr(data-label); color:var(--faint);
+                         font-size:9.5px; letter-spacing:.1em; text-transform:uppercase;
+                         margin-right:8px}
+  table.cards td.wide{grid-column:1 / -1; justify-content:flex-start;
+                      padding-bottom:7px; margin-bottom:4px;
+                      border-bottom:1px solid rgba(37,43,52,.7)}
+  table.cards td.wide .stockcell{align-items:flex-start}
+  /* Premium is implied by credit/lot ÷ lot size; drop it to shorten the card. */
+  table.cards td[data-label="Premium"]{display:none}
+  table.cards td.hide-m{display:none}
+  table.cards tr:hover td{background:transparent}
+
+  /* --- drawer: full-screen sheet --- */
+  .drawer{width:100vw; max-width:100vw; padding:16px 16px 40px}
+  .drawer .close{font-size:26px; padding:6px 10px; top:8px; right:8px}
+  .bigstat .v{font-size:26px}
+
+  .modal .card{width:94vw; padding:18px 16px}
+  .banner{font-size:12px}
+}
+
+/* Very small phones: single-column cards. */
+@media (max-width: 345px){
+  table.cards tr{grid-template-columns:1fr}
+  .searchwrap input{width:150px}
+}
+
+tbody tr{animation:fadein .32s ease both}
+@keyframes fadein{from{opacity:0; transform:translateY(3px)}to{opacity:1; transform:none}}
+.banner{border:1px solid var(--amber); background:rgba(210,153,34,.09); color:#f0d9a8;
+        padding:9px 13px; border-radius:6px; margin-bottom:14px; font-size:12px}
+.banner.stale{border-color:var(--red); background:rgba(248,81,73,.10); color:#ffc4c0}
+.banner a{color:var(--accent); font-weight:600}
+.banner .big{font-family:var(--font-display); letter-spacing:.1em; text-transform:uppercase;
+             font-size:12.5px; display:block; margin-bottom:3px; color:var(--red)}
+</style>
+</head>
+<body>
+<div id="app">
+<header>
+  <div class="bar">
+    <div class="brand">
+      <span class="mark">Delta&nbsp;Yield</span>
+      <span class="sub">NSE F&amp;O · Stocks</span>
+    </div>
+    <span class="pill" id="mktPill"><span class="dot" id="mktDot"></span><span id="mktText">—</span></span>
+    <span class="pill" id="stampPill">Updated <span class="mono" id="stamp">—</span></span>
+    <button class="btn" id="loginBtn" style="display:none">Log in to Kite</button>
+    <div class="kpis">
+      <div class="kpi"><span class="k">Stocks</span><span class="v" id="kStocks">—</span></div>
+      <div class="kpi"><span class="k">Contracts</span><span class="v" id="kBand">—</span></div>
+      <div class="kpi"><span class="k">Avg Yield</span><span class="v" id="kAvg">—</span></div>
+      <div class="kpi"><span class="k">Best</span><span class="v hot" id="kBest">—</span></div>
+      <div class="kpi"><span class="k">Next Refresh</span><span class="v" id="kNext">—</span></div>
+    </div>
+    <button class="btn primary" id="refreshBtn">Refresh now</button>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button data-tab="heatmap" class="on">Delta Heatmap</button>
+  <button data-tab="watch">Watch List</button>
+  <button data-tab="top">Opportunities</button>
+  <button data-tab="chain">Option Chain</button>
+  <button data-tab="about">Method</button>
+</nav>
+
+<div class="controls" id="controls"></div>
+<div id="ctlToggleHost"></div>
+<main id="view"></main>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer"></aside>
+
+<div class="modal" id="loginModal"><div class="card">
+  <h3>Refresh Kite session</h3>
+  <p>Zerodha expires API tokens every morning, so this is a once-a-day step.</p>
+  <ol>
+    <li>Open the Kite sign-in page and log in:
+      <a class="linkbox" id="loginLink" href="#" target="_blank" rel="noopener">…</a></li>
+    <li>You land on a page that <b>fails to load</b> — that is expected.
+        Copy the whole address-bar URL.</li>
+    <li>Paste it here:
+      <input type="text" id="loginPaste" placeholder="http://127.0.0.1/?request_token=…&amp;action=login&amp;status=success" autocomplete="off"></li>
+  </ol>
+  <div class="msg" id="loginMsg"></div>
+  <div class="row">
+    <button class="btn" id="loginCancel">Cancel</button>
+    <button class="btn primary" id="loginGo">Connect</button>
+  </div>
+</div></div>
+
+<script>
+"use strict";
+const EMB = window.__SNAPSHOT__ || null;      // set only in published snapshots
+const S = {
+  tab:"heatmap", side:"PE", expiry:"", liquidity:"all",
+  sortCol:"avg_return", sortDir:-1, quality:"ok", heatScale:"column", moveBy:{},
+  search:"", stockIndex:null, sugIdx:-1, watch:null, watchDirty:false, events:null, strat:null, stance:"neutral",
+  topSort:"return_pct", dmin:0.05, dmax:0.50, minOI:0, search:"",
+  chainStock:"", summary:null, heatmap:null, top:null, chain:null
+};
+
+/* ---------------- data access ---------------- */
+async function api(path, params){
+  const qs = new URLSearchParams(params||{}).toString();
+  if(EMB){                                     // published snapshot: no server
+    if(path==="/api/summary") return EMB.summary;
+    if(path==="/api/heatmap") return buildHeatmap(params.side, params.expiry, params.liquidity, params.quality);
+    if(path==="/api/top")     return filterTop(params);
+    if(path==="/api/chain")   return {name:params.name,
+        rows:EMB.rows.filter(r=>r.name===params.name), underlyings:EMB.underlyings.filter(u=>u.name===params.name)};
+    if(path==="/api/stocks")  return EMB.stocks;
+    return null;
+  }
+  const res = await fetch(path + (qs?"?"+qs:""));
+  if(!res.ok) throw new Error(path+" -> "+res.status);
+  return res.json();
+}
+// Snapshot mode rebuilds the same aggregations client-side from the embedded rows,
+// so the published page behaves identically to the live one.
+function buildHeatmap(side, expiry, liq, qual){
+  const best = new Map();
+  for(const r of EMB.rows){
+    if(r.return_pct==null || r.delta_bucket==null) continue;
+    if(side && r.opt_type!==side) continue;
+    if(expiry && r.expiry!==expiry) continue;
+    if(liq==="green" && r.liq_flag!=="green") continue;
+    if(liq==="tradeable" && r.liq_flag==="red") continue;
+    if(qual==="ok" && r.quality!=="ok") continue;
+    const k = r.name+"|"+r.delta_bucket.toFixed(2);
+    const d = Math.abs(r.abs_delta - r.delta_bucket);
+    const cur = best.get(k);
+    if(!cur || d < cur._d) best.set(k, Object.assign({}, r, {_d:d}));
+  }
+  const byStock = new Map();
+  for(const [k,r] of best){
+    const e = byStock.get(r.name) || {name:r.name, buckets:{}};
+    e.buckets[r.delta_bucket.toFixed(2)] = r;
+    byStock.set(r.name, e);
+  }
+  const out=[...byStock.values()];
+  for(const s of out){
+    const v = Object.values(s.buckets).map(b=>b.return_pct);
+    s.avg_return = v.length ? v.reduce((a,b)=>a+b,0)/v.length : null;
+    s.max_return = v.length ? Math.max(...v) : null;
+    s.coverage = v.length;
+    const any = Object.values(s.buckets)[0];
+    s.lot_size = any ? any.lot_size : null;
+    const m = Object.values(s.buckets).map(b=>b.margin).filter(x=>x);
+    s.min_margin = m.length ? Math.min(...m) : null;
+  }
+  out.sort((a,b)=>(b.avg_return||0)-(a.avg_return||0));
+  return {side, expiry, buckets:EMB.summary.buckets, stocks:out};
+}
+function filterTop(p){
+  let rows = EMB.rows.filter(r=>r.return_pct!=null
+    && Math.abs(r.abs_delta)>=(+p.dmin) && Math.abs(r.abs_delta)<=(+p.dmax));
+  if(p.side) rows=rows.filter(r=>r.opt_type===p.side);
+  if(p.expiry) rows=rows.filter(r=>r.expiry===p.expiry);
+  if(p.name) rows=rows.filter(r=>r.name===p.name);
+  if(p.liquidity==="green") rows=rows.filter(r=>r.liq_flag==="green");
+  if(p.liquidity==="tradeable") rows=rows.filter(r=>r.liq_flag!=="red");
+  if(p.quality==="ok") rows=rows.filter(r=>r.quality==="ok");
+  if(+p.min_oi_lots) rows=rows.filter(r=>(r.oi_lots||0)>=+p.min_oi_lots);
+  const col=p.sort||"return_pct";
+  rows.sort((a,b)=>(b[col]??-1e9)-(a[col]??-1e9));
+  return rows.slice(0,+(p.limit||300));
+}
+
+/* ---------------- stock search ----------------
+   NSE company names are heavily abbreviated -- "ORACLE FIN SERV SOFT",
+   "TATA MOTORS PASS VEH", "MAX FINANCIAL SERV". A plain substring match fails
+   on every one of those, because nobody types "FIN SERV SOFT". So each query
+   token only has to PREFIX some token of the name: "oracle financial" ->
+   ORACLE + FIN(ancial), "tata motors passenger" -> TATA MOTORS PASS VEH.
+   Aliases cover the handful of colloquial names that share no prefix at all. */
+const ALIASES={
+  BAJFINANCE:"bajaj finance", BAJAJFINSV:"bajaj finserv", MARUTI:"maruti suzuki",
+  MNM:"mahindra", "M&M":"mahindra and mahindra", LT:"larsen toubro",
+  OFSS:"oracle financial services software", TMPV:"tata motors passenger vehicles",
+  MFSL:"max financial services", LICHSGFIN:"lic housing finance",
+  HDFCBANK:"hdfc bank housing development", ICICIBANK:"icici bank",
+  SBIN:"state bank of india sbi", INFY:"infosys", TCS:"tata consultancy services",
+  ITC:"itc", RELIANCE:"reliance industries ril", AXISBANK:"axis bank",
+  KOTAKBANK:"kotak mahindra bank", BHARTIARTL:"bharti airtel",
+  HINDUNILVR:"hindustan unilever hul", ULTRACEMCO:"ultratech cement",
+  ASIANPAINT:"asian paints", TITAN:"titan tanishq", SUNPHARMA:"sun pharmaceutical",
+  POWERGRID:"power grid corporation", NTPC:"ntpc", ONGC:"oil natural gas",
+  JSWSTEEL:"jsw steel", TATASTEEL:"tata steel", COALINDIA:"coal india",
+  DRREDDY:"dr reddys laboratories", CIPLA:"cipla", WIPRO:"wipro",
+  HCLTECH:"hcl technologies", TECHM:"tech mahindra", ADANIENT:"adani enterprises",
+  BAJAJ_AUTO:"bajaj auto", HEROMOTOCO:"hero motocorp", EICHERMOT:"eicher motors royal enfield",
+  IDEA:"vodafone idea vi", ZOMATO:"zomato eternal", PAYTM:"paytm one97",
+  NAUKRI:"info edge naukri", DMART:"avenue supermarts dmart", PIIND:"pi industries",
+  GODREJCP:"godrej consumer products", PAGEIND:"page industries jockey",
+  JUBLFOOD:"jubilant foodworks dominos", FORCEMOT:"force motors",
+};
+function normalise(s){ return String(s||"").toUpperCase().replace(/[^A-Z0-9 ]+/g," ").replace(/\s+/g," ").trim(); }
+function searchIndex(stocks){
+  return stocks.map(s=>{
+    const ticker=normalise(s.name);
+    const company=normalise(s.company);
+    const alias=normalise(ALIASES[s.name]||"");
+    return {name:s.name, company:s.company||"", ticker,
+            tokens:(company+" "+alias).split(" ").filter(Boolean),
+            haystack:(ticker+" "+company+" "+alias)};
+  });
+}
+function scoreStock(entry, q){
+  if(!q) return 0;
+  const qn=normalise(q); if(!qn) return 0;
+  const qTokens=qn.split(" ").filter(Boolean);
+  const flat=qn.replace(/ /g,"");
+  if(entry.ticker===qn) return 10000;                     // exact ticker
+  if(entry.ticker.startsWith(flat)) return 9000-entry.ticker.length;
+  const compact=entry.tokens.join("");
+  if(compact.startsWith(flat)) return 8000-compact.length;
+  // every query token must prefix-match some name token, in order where possible
+  let score=0, cursor=0, matchedAll=true;
+  for(const qt of qTokens){
+    let found=-1;
+    for(let i=cursor;i<entry.tokens.length;i++){
+      if(entry.tokens[i].startsWith(qt)){ found=i; break; }
+    }
+    if(found<0){
+      for(let i=0;i<entry.tokens.length;i++){
+        if(entry.tokens[i].startsWith(qt)){ found=i; break; }
+      }
+    }
+    if(found<0){ matchedAll=false; break; }
+    score+=600-(found*20)-(entry.tokens[found].length-qt.length);
+    cursor=found+1;
+  }
+  if(matchedAll) return 4000+score;
+  if(entry.haystack.includes(qn)) return 1500-entry.haystack.indexOf(qn);
+  if(entry.ticker.includes(flat)) return 1200;
+  return 0;
+}
+function searchStocks(index, q, limit){
+  return index.map(e=>({e, s:scoreStock(e,q)}))
+              .filter(x=>x.s>0)
+              .sort((a,b)=>b.s-a.s || a.e.name.localeCompare(b.e.name))
+              .slice(0,limit||8).map(x=>x.e);
+}
+
+/* ---------------- formatting ---------------- */
+function moveHtml(spot, chg, pct){
+  if(spot==null) return "";
+  const cls = chg==null ? "flat" : (chg>0?"up":(chg<0?"down":"flat"));
+  const arrow = chg==null ? "" : (chg>0?"\u25B2":(chg<0?"\u25BC":"\u2022"));
+  // Compact by design: the arrow and colour carry direction, so the change and
+  // percent drop their signs and the whole thing stays on one short line.
+  const move = chg==null ? "" :
+    ` <span class="${cls}"><span class="ar">${arrow}</span>${nf(Math.abs(chg),2)} (${nf(Math.abs(pct),2)}%)</span>`;
+  const lvl = spot>=10000 ? nf(spot,0) : nf(spot,2);
+  return `<span class="px"><span class="lv">${lvl}</span>${move}</span>`;
+}
+const nf=(v,d=2)=>v==null||isNaN(v)?"—":(+v).toFixed(d);
+const pct=(v,d=2)=>v==null?"—":nf(v,d)+"%";
+function inr(v){                              // Indian short-scale money
+  if(v==null||isNaN(v)) return "—";
+  const a=Math.abs(v);
+  if(a>=1e7) return "₹"+(v/1e7).toFixed(2)+"Cr";
+  if(a>=1e5) return "₹"+(v/1e5).toFixed(2)+"L";
+  if(a>=1e3) return "₹"+(v/1e3).toFixed(1)+"k";
+  return "₹"+Math.round(v);
+}
+const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+function timeAgo(iso){
+  if(!iso) return "—";
+  const s=Math.max(0,(Date.now()-new Date(iso).getTime())/1000);
+  if(s<90) return Math.round(s)+"s ago";
+  if(s<5400) return Math.round(s/60)+"m ago";
+  return Math.round(s/3600)+"h ago";
+}
+
+/* heat ramp: low values recede into the panel, high values glow.
+   Only the top of the distribution should attract the eye. */
+const RAMP=[[18,22,28],[26,38,46],[30,60,64],[48,84,66],[110,104,52],[176,120,46],[219,132,40],[240,150,52]];
+function heatColor(v,lo,hi){
+  if(v==null) return "transparent";
+  let t=(v-lo)/((hi-lo)||1); t=Math.max(0,Math.min(1,t));
+  t=Math.pow(t,0.72);
+  const x=t*(RAMP.length-1), i=Math.min(RAMP.length-2,Math.floor(x)), f=x-i;
+  const c=RAMP[i].map((a,j)=>Math.round(a+(RAMP[i+1][j]-a)*f));
+  return `rgb(${c[0]},${c[1]},${c[2]})`;
+}
+function heatInk(v,lo,hi){
+  let t=(v-lo)/((hi-lo)||1); t=Math.max(0,Math.min(1,t));
+  return t>0.55?"#14100a":(t>0.22?"#dfe4ea":"#7b8492");
+}
+function quantile(arr,q){
+  if(!arr.length) return 0;
+  const s=[...arr].sort((a,b)=>a-b), p=(s.length-1)*q, b=Math.floor(p);
+  return s[b+1]!==undefined ? s[b]+(p-b)*(s[b+1]-s[b]) : s[b];
+}
+
+/* ---------------- header ---------------- */
+function paintHeader(d){
+  const m=d.market||{}, run=d.runner||{};
+  const dot=document.getElementById("mktDot"), txt=document.getElementById("mktText");
+  // Session state outranks market state: a dead token is the thing you must
+  // act on, and it used to be repainted away by this function every 5 seconds.
+  if(EMB){
+    const dead = EMB.session_ok===false;
+    dot.className = dead ? "dot err" : "dot warn";
+    txt.textContent = dead ? "Feed stopped" : "Snapshot";
+  }
+  else if(d.auth_expired || (S.session && S.session.ok===false)){
+    dot.className="dot err"; txt.textContent="Kite session expired";
+  }
+  else if(run.status==="error"){ dot.className="dot err"; txt.textContent="Collector error"; }
+  else if(run.status==="running"){ dot.className="dot warn"; txt.textContent="Refreshing"; }
+  else if(m.open){ dot.className="dot live"; txt.textContent="Market open"; }
+  else { dot.className="dot"; txt.textContent="Market closed"; }
+  const snap=d.snapshot||{};
+  document.getElementById("stamp").textContent = timeAgo(snap.ts);
+  document.getElementById("kStocks").textContent = d.stocks ?? "—";
+  document.getElementById("kBand").textContent = (d.band_contracts??0).toLocaleString("en-IN");
+  document.getElementById("kAvg").textContent = d.avg_return_pct!=null?nf(d.avg_return_pct,2)+"%":"—";
+  document.getElementById("kBest").textContent = d.best?nf(d.best.return_pct,2)+"%":"—";
+  const nb=document.getElementById("kNext");
+  if(EMB){ nb.textContent="—"; }
+  else if(run.next_run){
+    const s=Math.max(0,run.next_run-Date.now()/1000);
+    nb.textContent = m.open ? Math.floor(s/60)+":"+String(Math.floor(s%60)).padStart(2,"0") : "closed";
+  } else nb.textContent="—";
+}
+
+/* ---------------- controls ---------------- */
+function paintControls(){
+  const c=document.getElementById("controls");
+  const wasOpen=c.classList.contains("open");
+  const exps=(S.summary&&S.summary.expiries)||[];
+  const expOpts=exps.map(e=>`<option value="${e}" ${S.expiry===e?"selected":""}>${e}</option>`).join("");
+  const liq=`<div class="ctl"><label>Liquidity</label><select id="fLiq">
+      <option value="all" ${S.liquidity==="all"?"selected":""}>Show all</option>
+      <option value="tradeable" ${S.liquidity==="tradeable"?"selected":""}>Hide red only</option>
+      <option value="green" ${S.liquidity==="green"?"selected":""}>Green only</option>
+    </select></div>`;
+  const side=`<div class="ctl"><label>Side</label><div class="seg" id="segSide">
+      <button data-v="PE" class="${S.side==="PE"?"on":""}">PUT</button>
+      <button data-v="CE" class="${S.side==="CE"?"on":""}">CALL</button>
+    </div></div>`;
+  const exp=`<div class="ctl"><label>Expiry</label><select id="fExp">
+      <option value="">All</option>${expOpts}</select></div>`;
+  const search=`<div class="ctl"><label>Find</label><div class="searchwrap">
+      <span class="mag">&#9906;</span>
+      <input type="text" id="fSearch" autocomplete="off" spellcheck="false"
+             placeholder="ticker or company" value="${esc(S.search)}">
+      ${S.search?`<button class="clr" id="fSearchClr" title="Clear">&times;</button>`:""}
+      <div class="sug" id="fSug"></div></div></div>`;
+  const scale=`<div class="ctl"><label>Colour</label><select id="fScale">
+      <option value="column" ${S.heatScale==="column"?"selected":""}>Rank within each delta</option>
+      <option value="global" ${S.heatScale==="global"?"selected":""}>Absolute yield</option>
+    </select></div>`;
+  const qual=`<div class="ctl"><label>Price</label><select id="fQual">
+      <option value="ok" ${S.quality==="ok"?"selected":""}>Live book only</option>
+      <option value="all" ${S.quality==="all"?"selected":""}>Include stale / outlier</option>
+    </select></div>`;
+
+  if(S.tab==="heatmap")      c.innerHTML=search+side+exp+liq+qual+scale;
+  else if(S.tab==="watch")   c.innerHTML=side+exp+liq+qual;
+  else if(S.tab==="top")     c.innerHTML=`<div class="ctl"><label>Side</label><div class="seg" id="segSide">
+      <button data-v="" class="${S.side===""?"on":""}">BOTH</button>
+      <button data-v="PE" class="${S.side==="PE"?"on":""}">PUT</button>
+      <button data-v="CE" class="${S.side==="CE"?"on":""}">CALL</button></div></div>`
+      +exp+liq
+      +`<div class="ctl"><label>Delta</label>
+        <input type="number" id="fDmin" value="${S.dmin}" step="0.05" min="0" max="1" style="width:62px">
+        <span class="faint">–</span>
+        <input type="number" id="fDmax" value="${S.dmax}" step="0.05" min="0" max="1" style="width:62px"></div>`
+      +`<div class="ctl"><label>Min OI (lots)</label><input type="number" id="fOI" value="${S.minOI}" step="50" min="0" style="width:74px"></div>`
+      +qual;
+  else if(S.tab==="chain")   c.innerHTML=`<div class="ctl"><label>Stock</label>
+      <input type="text" id="fStock" list="stocklist" value="${esc(S.chainStock)}" placeholder="e.g. HDFCBANK" style="width:180px">
+      <datalist id="stocklist"></datalist></div>`+exp;
+  else c.innerHTML="";
+
+  // Mobile: put the filters behind a toggle so the data starts near the top.
+  // The bar is injected here (not in the static markup) so it always sits
+  // above whatever set of controls this tab rendered.
+  if(c.innerHTML.trim()){
+    c.insertAdjacentHTML("afterbegin",
+      `<div class="ctlbar"><button class="btn" id="ctlToggle">Filters</button>
+       <span class="faint" id="ctlSummary" style="font-size:11px"></span></div>`);
+    if(wasOpen) c.classList.add("open");
+    const t=document.getElementById("ctlToggle");
+    if(t) t.onclick=()=>{ c.classList.toggle("open");
+      t.textContent = c.classList.contains("open") ? "Hide filters" : "Filters"; };
+    const sum=document.getElementById("ctlSummary");
+    if(sum) sum.textContent=[S.side==="PE"?"Puts":(S.side==="CE"?"Calls":"Both"),
+                            S.expiry||"all expiries"].join(" · ");
+  }
+
+  const seg=document.getElementById("segSide");
+  if(seg) seg.querySelectorAll("button").forEach(b=>b.onclick=()=>{S.side=b.dataset.v; render();});
+  const bind=(id,fn)=>{const el=document.getElementById(id); if(el) el.onchange=fn;};
+  bind("fExp",e=>{S.expiry=e.target.value; render();});
+  bind("fLiq",e=>{S.liquidity=e.target.value; render();});
+  bind("fQual",e=>{S.quality=e.target.value; render();});
+  bind("fScale",e=>{S.heatScale=e.target.value; render();});
+  if(S.tab==="heatmap") wireSearch();
+  bind("fDmin",e=>{S.dmin=+e.target.value; render();});
+  bind("fDmax",e=>{S.dmax=+e.target.value; render();});
+  bind("fOI",e=>{S.minOI=+e.target.value; render();});
+  bind("fStock",e=>{S.chainStock=e.target.value.toUpperCase().trim(); render();});
+  if(S.tab==="chain"){
+    api("/api/stocks").then(list=>{
+      const dl=document.getElementById("stocklist");
+      if(dl) dl.innerHTML=list.map(s=>`<option value="${s.name}">`).join("");
+    }).catch(()=>{});
+  }
+}
+
+/* ---------------- events ---------------- */
+async function loadEvents(){
+  if(S.events) return S.events;
+  if(EMB){ S.events = EMB.events || []; }
+  else {
+    try{ S.events = (await api("/api/events",{days:45})).events || []; }
+    catch(e){ S.events = []; }
+  }
+  return S.events;
+}
+function eventsSection(){
+  const evs=(S.events||[]).slice(0,24);
+  if(!evs.length) return "";
+  const exp=S.expiry||((S.summary&&S.summary.expiries||[])[0]);
+  const cards=evs.map(e=>{
+    // "Inside expiry" is the thing that actually matters to an option seller:
+    // an event before expiry is priced into the premium you are collecting.
+    const inExp = exp ? (e.event_date <= exp) : false;
+    const conf = e.confidence==="confirmed";
+    const mv = e.day_pct!=null
+      ? `<span class="${e.day_pct>0?"up":"down"}">${e.day_pct>0?"+":""}${nf(e.day_pct,2)}%</span>` : "";
+    const priced = !EMB || !!(EMB.strategies||{})[`${e.name}|${S.stance}`]
+                   || !!(EMB.strategies||{})[`${e.name}|neutral`];
+    return `<div class="evcard${priced?"":" noprice"}" data-ev="${esc(e.name)}">
+      <div class="top"><span class="tick">${esc(e.name)}</span>
+        <span class="d">${e.days_away<=0?"today":e.days_away+"d"}</span></div>
+      <div class="co">${esc(e.company||"")}</div>
+      <div class="why">${esc(e.purpose||e.event_type||"")} ${mv}</div>
+      <div style="margin-top:6px;display:flex;gap:5px;flex-wrap:wrap">
+        <span class="badge ${conf?"conf":"est"}">${conf?"confirmed":"estimated"}</span>
+        ${inExp?`<span class="badge inexp">before ${esc(exp)}</span>`:""}
+        <span class="badge">${esc(e.event_type||"")}</span>
+        ${priced?`<span class="badge inexp">structures</span>`:""}</div></div>`;
+  }).join("");
+  return `<div class="evsec">
+    <div class="evhead">Events ahead
+      <span class="faint" style="text-transform:none;letter-spacing:0;font-size:11px">
+      — confirmed dates come from NSE filings; estimated ones are projected from the
+      company's own filing history and can be off by days. Tap a card for structures.</span>
+    </div><div class="evgrid">${cards}</div></div>`;
+}
+
+async function openStrategies(name){
+  const host=document.getElementById("stratHost");
+  if(!host) return;
+  const exp=S.expiry||((S.summary&&S.summary.expiries||[])[0]);
+  host.innerHTML=`<div class="hint">Building structures for <b>${esc(name)}</b>…</div>`;
+  host.scrollIntoView({behavior:"smooth", block:"start"});
+  let d;
+  if(EMB){
+    // Structures are pre-priced during collection and baked into the snapshot,
+    // so the shared link is fully usable without a server.
+    const pack=(EMB.strategies||{})[`${name}|${S.stance}`];
+    if(!pack){
+      host.innerHTML=`<div class="banner">No pre-priced structures for <b>${esc(name)}</b>.
+        The snapshot prices the stocks with dated events, the watch list and the
+        highest-yielding names; this one is outside that set.</div>`;
+      return;
+    }
+    d={name, expiry:exp, stance:S.stance,
+       stance_desc:{bullish:"You expect the stock to rise, or at least not fall much.",
+                    bearish:"You expect the stock to fall, or at least not rise much.",
+                    neutral:"You expect the stock to stay in a range."}[S.stance],
+       events:(EMB.events||[]).filter(e=>e.name===name),
+       computed_at:(EMB.strategies||{})._computed_at,
+       structures:pack};
+  } else {
+    try{ d=await api("/api/strategies",{name, expiry:exp, stance:S.stance}); }
+    catch(e){ host.innerHTML=`<div class="banner">Could not build structures: ${esc(e.message)}</div>`; return; }
+  }
+  S.strat=d;
+  if(!d.structures || !d.structures.length){
+    host.innerHTML=`<div class="banner">No usable structures for ${esc(name)} at
+      ${esc(exp)} — its chain has too few strikes with a live two-sided book.</div>`;
+    return;
+  }
+  const seg=["bullish","neutral","bearish"].map(x=>
+    `<button data-stance="${x}" class="${S.stance===x?"on":""}">${x.toUpperCase()}</button>`).join("");
+  const evs=(d.events||[]).map(e=>
+    `<span class="badge ${e.confidence==="confirmed"?"conf":"est"}">${esc(e.event_type)} ${esc(e.event_date)}</span>`).join(" ");
+  const cards=d.structures.map(st=>{
+    const legs=st.legs.map(l=>`<div class="legrow">
+        <span class="a ${l.action.toLowerCase()}">${l.action}</span>
+        <span>${Math.abs(l.qty_lots)}\u00d7</span>
+        <span>${nf(l.strike, l.strike>=1000?0:1)} ${l.opt_type}</span>
+        <span class="muted">@ ${nf(l.price,2)}</span>
+        <span class="faint">Δ${nf(Math.abs(l.delta),3)}${l.iv?" · IV "+nf(l.iv,0)+"%":""}</span>
+        ${l.liq_flag?`<span class="chip ${l.liq_flag}"></span>`:""}
+      </div>`).join("");
+    const credit=st.net_credit>=0;
+    return `<div class="strat">
+      <div class="sh"><b>${esc(st.name)}</b>
+        <span class="mono" style="font-size:12px">
+          ${credit?"credit":"debit"} <b style="color:${credit?"var(--accent)":"var(--blue)"}">${inr(Math.abs(st.net_credit))}</b>
+          ${st.return_on_margin!=null?` · RoM <b style="color:var(--accent)">${nf(st.return_on_margin,2)}%</b>`:""}
+        </span></div>
+      <div class="sb">
+        <p class="why">${esc(st.rationale)}</p>
+        ${legs}
+        <div class="mgrid">
+          <div><span class="k">Margin</span><span class="v">${inr(st.margin)}</span></div>
+          <div><span class="k">Max profit</span><span class="v ok">${inr(st.max_profit)}</span></div>
+          <div><span class="k">Max loss</span><span class="v risk">${st.max_loss==null?"Unbounded":inr(Math.abs(st.max_loss))}</span></div>
+          <div><span class="k">Breakeven</span><span class="v">${st.breakevens.length?st.breakevens.map(b=>nf(b,0)).join(" / "):"—"}</span></div>
+          <div><span class="k">Net delta</span><span class="v">${nf(st.net_delta,3)}</span></div>
+        </div>
+        ${st.warnings.map(w=>`<div class="banner" style="margin:10px 0 0">${esc(w)}</div>`).join("")}
+      </div></div>`;
+  }).join("");
+  host.innerHTML=`<div class="evsec">
+    <div class="evhead">${esc(name)} · ${esc(exp)} ${evs}
+      <span class="seg" style="margin-left:auto">${seg}</span></div>
+    <p class="hint">${esc(d.stance_desc||"")} These are the conventional structures for that
+      stance, built from live strikes. Margin is Zerodha's <b>netted</b> figure for the whole
+      position, which is why the defined-risk versions need so much less of it.
+      <b>Computed, not recommended</b> — no view is expressed on ${esc(name)}.
+      ${d.computed_at?`Priced ${esc(String(d.computed_at).replace("T"," ").slice(0,16))}.`:""}</p>
+    ${cards}</div>`;
+  host.querySelectorAll("[data-stance]").forEach(b=>b.onclick=()=>{
+    S.stance=b.dataset.stance; openStrategies(name);
+  });
+}
+
+/* ---------------- watch list ----------------
+   Server-side SQLite is the source of truth on the local dashboard, so the
+   list survives restarts and is what gets baked into the published snapshot.
+   The published page has no server, so edits there fall back to localStorage
+   and stay in that browser -- which is what makes the shared link usable on a
+   phone without pretending it can write to your Mac. */
+const WL_KEY="deltayield.watchlist";
+function wlLocal(){ try{ return JSON.parse(localStorage.getItem(WL_KEY)||"null"); }catch(e){ return null; } }
+function wlSaveLocal(list){ try{ localStorage.setItem(WL_KEY, JSON.stringify(list)); }catch(e){} }
+
+async function wlLoad(){
+  if(S.watch) return S.watch;
+  if(EMB){
+    // Prefer whatever this viewer curated locally; otherwise show the
+    // operator's list as it was at publish time.
+    S.watch = wlLocal() || (EMB.watchlist||[]).slice();
+  } else {
+    try{
+      const d=await (await fetch("/api/watchlist")).json();
+      S.watch = d.watchlist||[];
+    }catch(e){ S.watch = wlLocal() || []; }
+  }
+  return S.watch;
+}
+async function wlMutate(action, names){
+  names=(names||[]).map(n=>String(n).toUpperCase());
+  if(EMB){
+    let list=(S.watch||[]).slice();
+    if(action==="add") names.forEach(n=>{ if(!list.includes(n)) list.push(n); });
+    else if(action==="remove") list=list.filter(n=>!names.includes(n));
+    else if(action==="clear") list=[];
+    S.watch=list; wlSaveLocal(list); return list;
+  }
+  try{
+    const res=await fetch("/api/watchlist",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({action, names})});
+    const d=await res.json();
+    if(d.watchlist){ S.watch=d.watchlist; wlSaveLocal(d.watchlist); }
+    return S.watch;
+  }catch(e){ return S.watch; }
+}
+
+/* ---------------- search wiring ---------------- */
+async function ensureIndex(){
+  if(S.stockIndex) return S.stockIndex;
+  const list = EMB ? EMB.stocks : await api("/api/stocks");
+  S.stockIndex = searchIndex(list);
+  S.moveBy = {};
+  list.forEach(s=>{ S.moveBy[s.name]={spot:s.spot, day_change:s.day_change, day_pct:s.day_pct}; });
+  return S.stockIndex;
+}
+function applySearchFilter(){
+  // Filter by toggling a class rather than re-rendering: the search box keeps
+  // focus and caret, so typing never stutters.
+  const q=S.search.trim();
+  const table=document.querySelector("#view table");
+  if(!table) return;
+  let shown=0;
+  if(!q){
+    table.querySelectorAll("tbody tr").forEach(tr=>{tr.classList.remove("hidden-row"); shown++;});
+  } else {
+    const hits=new Set(searchStocks(S.stockIndex||[], q, 400).map(e=>e.name));
+    table.querySelectorAll("tbody tr").forEach(tr=>{
+      const on=hits.has(tr.dataset.name);
+      tr.classList.toggle("hidden-row", !on);
+      if(on) shown++;
+    });
+  }
+  const note=document.getElementById("searchNote");
+  if(note) note.textContent = q ? `${shown} match${shown===1?"":"es"} for “${q}”` : "";
+}
+function renderSuggestions(){
+  const box=document.getElementById("fSug"); if(!box) return;
+  const q=S.search.trim();
+  if(!q){ box.classList.remove("on"); box.innerHTML=""; return; }
+  const hits=searchStocks(S.stockIndex||[], q, 8);
+  if(!hits.length){
+    box.innerHTML=`<div class="none">No stock matches “${esc(q)}”</div>`;
+    box.classList.add("on"); return;
+  }
+  box.innerHTML=hits.map((e,i)=>
+    `<div data-pick="${esc(e.name)}" class="${i===S.sugIdx?"sel":""}">
+       <span class="tk">${esc(e.name)}</span><span class="co">${esc(e.company)}</span></div>`).join("");
+  box.classList.add("on");
+  box.querySelectorAll("[data-pick]").forEach(el=>el.onmousedown=ev=>{
+    ev.preventDefault(); pickStock(el.dataset.pick);
+  });
+}
+function pickStock(name){
+  S.search=name; S.sugIdx=-1;
+  const inp=document.getElementById("fSearch");
+  if(inp){ inp.value=name; }
+  const box=document.getElementById("fSug"); if(box) box.classList.remove("on");
+  applySearchFilter();
+  const row=document.querySelector(`#view tbody tr[data-name="${CSS.escape(name)}"]`);
+  if(row) row.scrollIntoView({block:"center", behavior:"smooth"});
+  paintControls(); if(S.tab==="heatmap") wireSearch();
+}
+async function wireSearch(){
+  const inp=document.getElementById("fSearch"); if(!inp) return;
+  await ensureIndex();
+  const clr=document.getElementById("fSearchClr");
+  if(clr) clr.onclick=()=>{ S.search=""; S.sugIdx=-1; paintControls(); wireSearch(); applySearchFilter(); };
+
+  inp.oninput=e=>{
+    const typed=e.target.value;
+    const deleting=(inp._prev||"").length > typed.length;
+    inp._prev=typed;
+    S.search=typed; S.sugIdx=-1;
+    // Inline autofill: complete to the best match and SELECT the added part,
+    // so the next keystroke overwrites it if the guess was wrong.
+    // Deliberately conservative:
+    //   - never on deletion, or the field fights you when you backspace
+    //   - not until 2 chars: completing "g" to "GAIL" is noise, not help
+    //   - not once a space is typed, because then you are writing a company
+    //     name ("godrej con") and completing it to a ticker is always wrong
+    const canAutofill = !deleting && typed.trim().length>=2 && !typed.includes(" ");
+    if(canAutofill){
+      const best=searchStocks(S.stockIndex, typed, 1)[0];
+      if(best && best.name.toUpperCase().startsWith(typed.toUpperCase())
+         && best.name.length>typed.length){
+        inp.value=best.name;
+        inp.setSelectionRange(typed.length, best.name.length);
+        S.search=best.name;
+      }
+    }
+    renderSuggestions(); applySearchFilter();
+  };
+  inp.onkeydown=e=>{
+    const box=document.getElementById("fSug");
+    const items=box?[...box.querySelectorAll("[data-pick]")]:[];
+    if(e.key==="ArrowDown"){ e.preventDefault(); S.sugIdx=Math.min(S.sugIdx+1, items.length-1); renderSuggestions(); }
+    else if(e.key==="ArrowUp"){ e.preventDefault(); S.sugIdx=Math.max(S.sugIdx-1, -1); renderSuggestions(); }
+    else if(e.key==="Enter"){
+      e.preventDefault();
+      const pick = S.sugIdx>=0 && items[S.sugIdx] ? items[S.sugIdx].dataset.pick
+                 : (searchStocks(S.stockIndex, S.search, 1)[0]||{}).name;
+      if(pick) pickStock(pick);
+    }
+    else if(e.key==="Escape"){ S.search=""; inp.value=""; S.sugIdx=-1;
+      if(box) box.classList.remove("on"); applySearchFilter(); }
+  };
+  inp.onblur=()=>{ const b=document.getElementById("fSug"); if(b) setTimeout(()=>b.classList.remove("on"),120); };
+  inp.onfocus=()=>{ if(S.search.trim()) renderSuggestions(); };
+}
+
+/* ---------------- views ---------------- */
+function staleBanner(){
+  // Published snapshots cannot refresh themselves, so they must be honest about
+  // their own age. Deliberately NOT a Kite sign-in prompt: this page is public,
+  // and a shareable URL asking for broker credentials is a phishing pattern
+  // even when well-intentioned. The action link points at the operator's own
+  // local dashboard, which is where the real sign-in lives.
+  if(!EMB) return "";
+  const ts = EMB.data_ts || EMB.generated_at;
+  if(!ts) return "";
+  const ageMin = (Date.now() - new Date(ts).getTime())/60000;
+  const limit = EMB.stale_after_minutes || 12;
+  const sessionDead = EMB.session_ok === false;
+  // During market hours a snapshot older than the limit means the pipeline
+  // stopped; outside them, being old is simply correct.
+  const now = new Date();
+  const ist = new Date(now.getTime() + (now.getTimezoneOffset()+330)*60000);
+  const mins = ist.getHours()*60 + ist.getMinutes();
+  const marketOpen = ist.getDay()>=1 && ist.getDay()<=5 && mins>=555 && mins<=930;
+  if(!sessionDead && !(marketOpen && ageMin>limit)) return "";
+  const age = ageMin<90 ? `${Math.round(ageMin)} minutes` : `${(ageMin/60).toFixed(1)} hours`;
+  const op = EMB.operator_url || "http://127.0.0.1:8777/";
+  return `<div class="banner stale"><span class="big">Data is frozen</span>
+    ${sessionDead
+      ? `The scanner's Kite session expired, so these numbers stopped updating <b>${age} ago</b> (${esc(String(ts).replace("T"," ").slice(0,16))} IST).`
+      : `These numbers are <b>${age} old</b> and the market is open, so the feed has stalled.`}
+    <br><b>If this is your scanner:</b> <a href="${esc(op)}">open your local dashboard</a> and sign in to Kite to resume.</div>`;
+}
+
+function noData(){
+  // In snapshot mode there is no collector to blame -- the filters are the
+  // only thing that can empty the grid, so say so.
+  if(EMB) return `<div class="empty-state"><div class="big">Nothing matches these filters</div>
+    <p>This is a fixed snapshot of ${(EMB.rows||[]).length.toLocaleString("en-IN")} contracts.<br>
+    Try widening <b>Price</b>, <b>Liquidity</b> or the delta range.</p></div>`;
+  return `<div class="empty-state"><div class="big">No snapshot yet</div>
+    <p>The collector has not completed a cycle.<br>Start it with <code>python3 server.py</code>, then hit <b>Refresh now</b>.</p></div>`;
+}
+
+async function viewHeatmap(){
+  const d=await api("/api/heatmap",{side:S.side, expiry:S.expiry, liquidity:S.liquidity, quality:S.quality});
+  S.heatmap=d;
+  if(!d.stocks.length) return noData();
+  const buckets=d.buckets;
+  const all=[];
+  d.stocks.forEach(s=>Object.values(s.buckets).forEach(b=>all.push(b.return_pct)));
+  const lo=quantile(all,0.05), hi=quantile(all,0.95);
+
+  // Yield rises with delta by construction, so a single global colour scale
+  // just re-draws the delta axis: every row runs cold->hot left to right and
+  // cross-stock differences vanish. Scaling each delta column against its own
+  // distribution makes colour mean "how well does this stock pay AT THIS
+  // DELTA versus every other stock" -- the actual question.
+  const colScale={};
+  buckets.forEach(b=>{
+    const k=b.toFixed(2);
+    const v=d.stocks.map(s=>(s.buckets[k]||{}).return_pct).filter(x=>x!=null);
+    colScale[k]=v.length?[quantile(v,0.05),quantile(v,0.95)]:[lo,hi];
+  });
+  const scaleFor=k=>S.heatScale==="column"?colScale[k]:[lo,hi];
+
+  const rows=[...d.stocks].sort((a,b)=>{
+    let x,y;
+    if(S.sortCol==="name"){ return -S.sortDir*String(a.name).localeCompare(String(b.name)); }
+    if(S.sortCol==="avg_return"||S.sortCol==="max_return"||S.sortCol==="min_margin"||S.sortCol==="lot_size"){
+      x=a[S.sortCol]; y=b[S.sortCol];
+    } else { x=(a.buckets[S.sortCol]||{}).return_pct; y=(b.buckets[S.sortCol]||{}).return_pct; }
+    // sortDir -1 means DESCENDING, so the comparator must be (y - x).
+    // Missing values sink to the bottom either way.
+    x = (x==null?-1e9:x); y = (y==null?-1e9:y);
+    return S.sortDir*(x-y);
+  });
+  const arrow=c=>S.sortCol===c?`<span class="arrow">${S.sortDir<0?"▼":"▲"}</span>`:"";
+  const head=`<tr>
+    <th class="l sticky-l sortable" data-c="name">Stock ${arrow("name")}</th>
+    <th class="sortable" data-c="lot_size">Lot ${arrow("lot_size")}</th>
+    <th class="sortable" data-c="min_margin">Margin/lot ${arrow("min_margin")}</th>
+    ${buckets.map(b=>`<th class="sortable" data-c="${b.toFixed(2)}">${b.toFixed(2)}Δ ${arrow(b.toFixed(2))}</th>`).join("")}
+    <th class="sortable" data-c="avg_return">Avg ${arrow("avg_return")}</th>
+    <th class="sortable" data-c="max_return">Best ${arrow("max_return")}</th></tr>`;
+
+  const body=rows.map(s=>{
+    const cells=buckets.map(b=>{
+      const k=b.toFixed(2), c=s.buckets[k];
+      if(!c) return `<td class="heat empty">·</td>`;
+      const [clo,chi]=scaleFor(k);
+      const bg=heatColor(c.return_pct,clo,chi);
+      return `<td class="heat" style="background:${bg};color:${heatInk(c.return_pct,clo,chi)}"
+        data-sym="${esc(c.tradingsymbol)}" title="${esc(c.tradingsymbol)} · Δ${nf(c.abs_delta,3)} · ${inr(c.margin)}/lot">
+        ${nf(c.return_pct,2)}</td>`;
+    }).join("");
+    return `<tr data-name="${esc(s.name)}">
+      <td class="l sticky-l"><div class="stockcell">
+        <span><span class="tick">${esc(s.name)}</span>
+          <span class="faint" style="font-size:10px"> ${s.coverage}/10</span></span>
+        ${(()=>{const m=S.moveBy[s.name]||{};
+            return moveHtml(m.spot!=null?m.spot:s.spot,
+                            m.day_change!=null?m.day_change:s.day_change,
+                            m.day_pct!=null?m.day_pct:s.day_pct);})()}
+      </div></td>
+      <td class="num muted">${s.lot_size??"—"}</td>
+      <td class="num muted">${inr(s.min_margin)}</td>
+      ${cells}
+      <td class="num" style="color:var(--accent)">${nf(s.avg_return,2)}</td>
+      <td class="num">${nf(s.max_return,2)}</td></tr>`;
+  }).join("");
+
+  const ramp=RAMP.map(c=>`<i style="background:rgb(${c[0]},${c[1]},${c[2]})"></i>`).join("");
+  return `<p class="hint">Each cell is the <b>premium collected as a % of the exact margin blocked for one lot</b>, for the strike closest to that delta.
+    ${S.heatScale==="column"?"Colour ranks each stock <b>against its peers at that same delta</b>, so you can read down a column to find who pays most for equivalent risk.":"Colour shows <b>absolute yield</b> across the whole grid."}
+    Sorted by <b>${S.sortCol==="avg_return"?"average yield":esc(S.sortCol)}</b> — click any column header to re-sort, click a cell for full detail.</p>
+  <div class="legend"><span>${S.heatScale==="column"?"Rank in column":"Yield"}</span>
+    <span class="mono">${S.heatScale==="column"?"low":nf(lo,2)+"%"}</span><div class="ramp">${ramp}</div>
+    <span class="mono">${S.heatScale==="column"?"high":nf(hi,2)+"%"}</span>
+    <span style="margin-left:16px">${esc(S.side==="PE"?"Put":"Call")} side · ${S.expiry?esc(S.expiry):"all expiries"} · ${rows.length} stocks</span>
+    <span id="searchNote" style="margin-left:14px;color:var(--accent)"></span></div>
+  <div class="tablewrap heat"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+}
+
+async function viewTop(){
+  await loadEvents();
+  const rows=await api("/api/top",{side:S.side, expiry:S.expiry, liquidity:S.liquidity,
+    dmin:S.dmin, dmax:S.dmax, min_oi_lots:S.minOI, sort:S.topSort, limit:400, quality:S.quality});
+  S.top=rows;
+  if(!rows.length) return noData();
+  const arrow=c=>S.topSort===c?`<span class="arrow">▼</span>`:"";
+  // Yield sits immediately after delta: it is the answer to the question this
+  // table exists to ask, so it must be visible without horizontal scrolling.
+  const cols=[["name","Stock","l"],["opt_type","Side",""],["strike","Strike",""],
+    ["abs_delta","Δ",""],["return_pct","Yield %",""],["margin","Margin/lot",""],
+    ["credit","Credit/lot",""],["mid","Premium",""],["iv","IV %",""],["dte","DTE",""],
+    ["expiry","Expiry","l"],["oi_lots","OI (lots)",""],["spread_pct","Spread %",""],["liq_flag","Liq",""]];
+  const head="<tr>"+cols.map(([c,l,cls])=>
+    `<th class="${cls} ${["return_pct","abs_delta","margin","credit","iv","oi_lots","dte"].includes(c)?"sortable":""}" data-c="${c}">${l} ${arrow(c)}</th>`).join("")+"</tr>";
+  const body=rows.map(r=>`<tr data-sym="${esc(r.tradingsymbol)}" style="cursor:pointer">
+    <td class="l wide"><div class="stockcell"><span class="tick">${esc(r.name)}</span>
+      ${moveHtml(r.spot, (S.moveBy[r.name]||{}).day_change, (S.moveBy[r.name]||{}).day_pct)}
+    </div></td>
+    <td class="num ${r.opt_type==="CE"?"side-ce":"side-pe"}" data-label="Side">${r.opt_type}</td>
+    <td class="num" data-label="Strike">${nf(r.strike,r.strike>=1000?0:1)}</td>
+    <td class="num" data-label="Delta">${nf(r.abs_delta,3)}</td>
+    <td class="num" data-label="Yield %" style="color:var(--accent);font-weight:600">${nf(r.return_pct,2)}</td>
+    <td class="num" data-label="Margin/lot">${inr(r.margin)}</td>
+    <td class="num muted" data-label="Credit/lot">${inr(r.credit)}</td>
+    <td class="num" data-label="Premium">${nf(r.mid,2)}</td>
+    <td class="num muted" data-label="IV %">${nf(r.iv,1)}</td>
+    <td class="num muted" data-label="DTE">${r.dte}</td>
+    <td class="l muted hide-m" style="font-size:11px" data-label="Expiry">${esc(r.expiry)}</td>
+    <td class="num muted" data-label="OI lots">${nf(r.oi_lots,0)}</td>
+    <td class="num muted hide-m" data-label="Spread %">${r.spread_pct==null?"—":nf(r.spread_pct,1)}</td>
+    <td class="num" data-label="Liquidity"><span class="chip ${r.liq_flag}"></span></td></tr>`).join("");
+  return `${S.quality!=="ok"?`<div class="banner">Showing contracts with <b>no live two-sided book or an outlier IV</b>. Their premium comes from a stale last-traded print, so the yield shown is not real. Switch <b>Price</b> back to “Live book only” to trust the ranking.</div>`:""}
+  <p class="hint">Every contract in the <b>${S.dmin}–${S.dmax}Δ</b> band, ranked by yield on margin.
+    Liquidity is <b>flagged, never hidden</b> — <span class="chip green"></span> good, <span class="chip amber"></span> thin, <span class="chip red"></span> wide spread or almost no OI. Click a row for detail.</p>
+  ${eventsSection()}
+  <div id="stratHost" class="stratwrap"></div>
+  <div class="tablewrap"><table class="cards"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+}
+
+async function viewChain(){
+  if(!S.chainStock) return `<div class="empty-state"><div class="big">Pick a stock</div>
+    <p>Type a symbol above to see its full option chain with live deltas.</p></div>`;
+  const d=await api("/api/chain",{name:S.chainStock, expiry:S.expiry});
+  if(!d.rows||!d.rows.length) return `<div class="empty-state"><div class="big">No chain for ${esc(S.chainStock)}</div>
+    <p>Check the symbol, or the stock may sit outside the scanned strike window.</p></div>`;
+  const rows=S.expiry?d.rows.filter(r=>r.expiry===S.expiry):d.rows;
+  const und=d.underlyings[0]||{};
+  const byStrike=new Map();
+  rows.forEach(r=>{
+    const e=byStrike.get(r.expiry+"|"+r.strike)||{strike:r.strike,expiry:r.expiry};
+    e[r.opt_type]=r; byStrike.set(r.expiry+"|"+r.strike,e);
+  });
+  const list=[...byStrike.values()].sort((a,b)=>a.expiry.localeCompare(b.expiry)||a.strike-b.strike);
+  const cell=(r,side)=>{
+    if(!r) return `<td class="num faint">—</td><td class="num faint">—</td><td class="num faint">—</td><td class="num faint">—</td>`;
+    return `<td class="num muted">${nf(r.iv,1)}</td>
+      <td class="num">${nf(r.abs_delta,3)}</td>
+      <td class="num">${nf(r.mid,2)}</td>
+      <td class="num" style="color:${r.return_pct?"var(--accent)":"var(--faint)"};font-weight:${r.return_pct?600:400}"
+          data-sym="${esc(r.tradingsymbol)}" style="cursor:pointer">${r.return_pct?nf(r.return_pct,2):"—"}</td>`;
+  };
+  const body=list.map(g=>{
+    const atm=und.future&&Math.abs(g.strike/und.future-1)<0.012;
+    return `<tr data-sym="${esc((g.CE||g.PE||{}).tradingsymbol)}" style="${atm?"background:rgba(88,166,255,.07)":""}">
+      ${cell(g.CE,"CE")}
+      <td class="num" style="font-weight:600;background:var(--panel-3)">${nf(g.strike,g.strike>=1000?0:1)}</td>
+      ${cell(g.PE,"PE")}
+      <td class="l faint" style="font-size:10.5px">${esc(g.expiry)}</td></tr>`;
+  }).join("");
+  const mv=S.moveBy[d.name]||{};
+  return `<p class="hint"><span class="tick" style="font-size:15px">${esc(d.name)}</span>
+    &nbsp; ${moveHtml(und.spot!=null?und.spot:mv.spot, mv.day_change, mv.day_pct)}
+    &nbsp; Spot <b class="mono">${nf(und.spot,2)}</b> &nbsp; Future <b class="mono">${nf(und.future,2)}</b>
+    &nbsp; Basis <b class="mono">${nf(und.basis_pct,2)}%</b> &nbsp; Lot <b class="mono">${und.lot_size??"—"}</b>
+    &nbsp;·&nbsp; <span class="side-ce">CALLS</span> left, <span class="side-pe">PUTS</span> right. Yield shown only where the strike is inside the ${S.dmin}–${S.dmax}Δ band.</p>
+  <div class="tablewrap"><table><thead><tr>
+    <th colspan="4" style="text-align:center;color:var(--blue)">CALLS</th>
+    <th style="text-align:center">Strike</th>
+    <th colspan="4" style="text-align:center;color:var(--accent)">PUTS</th>
+    <th class="l">Expiry</th></tr><tr>
+    <th>IV</th><th>Δ</th><th>Prem</th><th>Yield%</th>
+    <th style="background:var(--panel-3)"></th>
+    <th>IV</th><th>Δ</th><th>Prem</th><th>Yield%</th><th></th></tr></thead>
+    <tbody>${body}</tbody></table></div>`;
+}
+
+async function viewWatch(){
+  await wlLoad();
+  await ensureIndex();
+  const list=S.watch||[];
+  const chips=list.map(n=>{
+    const m=S.moveBy[n]||{};
+    const cls=m.day_change==null?"flat":(m.day_change>0?"up":"down");
+    const sg=m.day_change>0?"+":"";
+    return `<span class="tagx"><b>${esc(n)}</b>
+      ${m.day_pct!=null?`<span class="mv ${cls}">${sg}${nf(m.day_pct,2)}%</span>`:""}
+      <button data-wlrm="${esc(n)}" title="Remove">&times;</button></span>`;
+  }).join("");
+  const bar=`<div class="wl">
+      ${chips || `<span class="muted" style="font-size:12px">Your watch list is empty — add a stock to start tracking it.</span>`}
+      <span class="addbox">
+        <input type="text" id="wlAdd" placeholder="+ add stock or company" autocomplete="off" spellcheck="false">
+        <div class="sug" id="wlSug"></div>
+      </span>
+      ${list.length?`<button class="btn" id="wlClear">Clear all</button>`:""}
+    </div>`;
+
+  if(!list.length){
+    return bar+`<div class="empty-state"><div class="big">No stocks watched yet</div>
+      <p>Type a ticker or company name above — the same matcher as the heatmap,<br>
+      so “dominos” finds JUBLFOOD.<br>
+      ${EMB?"On this shared page your list is saved in this browser."
+           :"Your list is saved on disk and restored every time you open the app."}</p></div>`;
+  }
+
+  const d = EMB
+    ? (()=>{ const h=buildHeatmap(S.side,S.expiry,S.liquidity,S.quality);
+             const set=new Set(list);
+             h.stocks=h.stocks.filter(x=>set.has(x.name));
+             h.missing=list.filter(n=>!h.stocks.some(x=>x.name===n));
+             return h; })()
+    : await api("/api/watchlist/heatmap",{side:S.side, expiry:S.expiry,
+        liquidity:S.liquidity, quality:S.quality});
+  S.heatmap=d;
+
+  const missing=(d.missing||[]).length
+    ? `<div class="banner">No priced contracts right now for <b>${d.missing.map(esc).join(", ")}</b> at these filters — widen the delta band, expiry or price quality.</div>` : "";
+  if(!d.stocks.length) return bar+missing+noData();
+
+  const buckets=d.buckets;
+  const all=[]; d.stocks.forEach(s=>Object.values(s.buckets).forEach(b=>all.push(b.return_pct)));
+  const lo=quantile(all,0.05), hi=quantile(all,0.95);
+  // A handful of stocks is too small a sample for per-column ranking to mean
+  // anything, so the watch list always colours on absolute yield.
+  const rows=[...d.stocks].sort((a,b)=>(b.avg_return||0)-(a.avg_return||0));
+  const head=`<tr><th class="l sticky-l">Stock</th><th>Lot</th><th>Margin/lot</th>
+    ${buckets.map(b=>`<th>${b.toFixed(2)}Δ</th>`).join("")}
+    <th>Avg</th><th>Best</th></tr>`;
+  const body=rows.map(s=>{
+    const cells=buckets.map(b=>{
+      const c=s.buckets[b.toFixed(2)];
+      if(!c) return `<td class="heat empty">·</td>`;
+      return `<td class="heat" style="background:${heatColor(c.return_pct,lo,hi)};color:${heatInk(c.return_pct,lo,hi)}"
+        data-sym="${esc(c.tradingsymbol)}" title="${esc(c.tradingsymbol)} · Δ${nf(c.abs_delta,3)}">${nf(c.return_pct,2)}</td>`;
+    }).join("");
+    const m=S.moveBy[s.name]||{};
+    return `<tr data-name="${esc(s.name)}">
+      <td class="l sticky-l"><div class="stockcell">
+        <span><span class="tick">${esc(s.name)}</span>
+        <span class="faint" style="font-size:10px"> ${s.coverage}/10</span></span>
+        ${moveHtml(m.spot!=null?m.spot:s.spot, m.day_change, m.day_pct)}</div></td>
+      <td class="num muted">${s.lot_size??"—"}</td>
+      <td class="num muted">${inr(s.min_margin)}</td>
+      ${cells}
+      <td class="num" style="color:var(--accent)">${nf(s.avg_return,2)}</td>
+      <td class="num">${nf(s.max_return,2)}</td></tr>`;
+  }).join("");
+  const ramp=RAMP.map(c=>`<i style="background:rgb(${c[0]},${c[1]},${c[2]})"></i>`).join("");
+  return bar+missing+`<p class="hint">Your ${rows.length} watched stock${rows.length===1?"":"s"},
+    same yield-on-margin measure as the main heatmap. Colour is <b>absolute yield</b> here, not a rank —
+    a short list is too small a sample to rank within.</p>
+  <div class="legend"><span>Yield</span><span class="mono">${nf(lo,2)}%</span><div class="ramp">${ramp}</div>
+    <span class="mono">${nf(hi,2)}%</span>
+    <span style="margin-left:14px">${esc(S.side==="PE"?"Put":"Call")} side · ${S.expiry?esc(S.expiry):"all expiries"}</span></div>
+  <div class="tablewrap heat"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+}
+
+function viewAbout(){
+  const s=S.summary||{};
+  return `<div style="max-width:820px">
+  <p class="hint" style="font-size:13px;line-height:1.7">
+  <b style="color:var(--accent)">What the yield number means.</b> For every strike the scanner sells one lot and asks:
+  premium received ÷ margin actually blocked. Both sides of that ratio are real, not modelled —
+  the premium is the live bid-ask mid, and the margin comes from Zerodha's own margin engine.</p>
+  <dl class="kv" style="grid-template-columns:200px 1fr">
+    <dt>Yield</dt><dd class="l" style="text-align:left">premium × lot size ÷ margin per lot × 100</dd>
+    <dt>Premium</dt><dd class="l" style="text-align:left">bid-ask <b>mid</b>; falls back to LTP only when one side is missing</dd>
+    <dt>Margin</dt><dd class="l" style="text-align:left">Kite <code>/margins/orders</code>, one lot, SELL, NRML — exact SPAN + exposure</dd>
+    <dt>Delta &amp; IV</dt><dd class="l" style="text-align:left">Black-76 inverted from the mid, against the <b>same-expiry future</b> as forward</dd>
+    <dt>Why the future</dt><dd class="l" style="text-align:left">it embeds the market's own dividend and carry view, so no dividend guess leaks into delta</dd>
+    <dt>Delta band</dt><dd class="l" style="text-align:left">${(s.delta_band||[0.05,0.5]).join(" – ")} (absolute)</dd>
+    <dt>Universe</dt><dd class="l" style="text-align:left">${s.stocks??"—"} NSE F&amp;O <b>stocks</b> — all indices excluded</dd>
+    <dt>Expiries</dt><dd class="l" style="text-align:left">${(s.expiries||[]).join(", ")||"—"}</dd>
+    <dt>Refresh</dt><dd class="l" style="text-align:left">every ${Math.round((s.refresh_seconds||300)/60)} min while the market is open</dd>
+  </dl>
+  <p class="hint" style="line-height:1.7"><b style="color:var(--accent)">Read it with care.</b>
+  A higher yield is compensation for risk, not free money — the stocks at the top of this table are usually
+  there because their implied vol is high, which is precisely why the option may end up in the money.
+  Compare yields <b>within</b> a delta column, where the probability of being breached is roughly matched;
+  comparing across columns compares different risks. Yield is gross of costs and, since expiry
+  differs, a far-month row earns its premium over more days than a near-month one.</p>
+  <div class="logbox" id="logbox">—</div></div>`;
+}
+
+async function wireWatchAdd(inp){
+  await ensureIndex();
+  const box=document.getElementById("wlSug");
+  const draw=()=>{
+    const q=inp.value.trim();
+    if(!q){ box.classList.remove("on"); return; }
+    const hits=searchStocks(S.stockIndex,q,7).filter(e=>!(S.watch||[]).includes(e.name));
+    if(!hits.length){ box.innerHTML=`<div class="none">No match</div>`; box.classList.add("on"); return; }
+    box.innerHTML=hits.map(e=>`<div data-add="${esc(e.name)}">
+        <span class="tk">${esc(e.name)}</span><span class="co">${esc(e.company)}</span></div>`).join("");
+    box.classList.add("on");
+    box.querySelectorAll("[data-add]").forEach(el=>el.onmousedown=async ev=>{
+      ev.preventDefault();
+      await wlMutate("add",[el.dataset.add]); render();
+    });
+  };
+  inp.oninput=draw;
+  inp.onfocus=draw;
+  inp.onblur=()=>setTimeout(()=>box.classList.remove("on"),150);
+  inp.onkeydown=async e=>{
+    if(e.key==="Enter"){
+      e.preventDefault();
+      const best=searchStocks(S.stockIndex,inp.value,1)[0];
+      if(best){ await wlMutate("add",[best.name]); render(); }
+    } else if(e.key==="Escape"){ inp.value=""; box.classList.remove("on"); }
+  };
+  setTimeout(()=>inp.focus(),40);
+}
+
+/* ---------------- drawer ---------------- */
+async function openDrawer(sym){
+  if(!sym) return;
+  let r=null;
+  const pools=[S.top, S.heatmap&&S.heatmap.stocks.flatMap(s=>Object.values(s.buckets))];
+  for(const p of pools){ if(p){ const f=p.find(x=>x.tradingsymbol===sym); if(f){r=f;break;} } }
+  if(!r && EMB) r=EMB.rows.find(x=>x.tradingsymbol===sym);
+  if(!r){
+    const guess=sym.replace(/\d.*$/,"");
+    try{ const d=await api("/api/chain",{name:guess}); r=(d.rows||[]).find(x=>x.tradingsymbol===sym); }catch(e){}
+  }
+  if(!r) return;
+  const dr=document.getElementById("drawer");
+  dr.innerHTML=`<button class="close" id="drClose">×</button>
+    <h3>${esc(r.name)}</h3>
+    <div class="muted mono" style="font-size:11.5px">${esc(r.tradingsymbol)}</div>
+    <div class="bigstat"><div class="k">Yield on margin · 1 lot</div>
+      <div class="v">${nf(r.return_pct,2)}<span style="font-size:16px">%</span></div>
+      <div class="note">Collect <b>${inr(r.credit)}</b> against <b>${inr(r.margin)}</b> blocked${r.dte!=null?`, held ${r.dte} days to expiry`:""}.</div></div>
+    <dl class="kv">
+      <dt>Side</dt><dd class="${r.opt_type==="CE"?"side-ce":"side-pe"}">${r.opt_type==="CE"?"CALL":"PUT"}</dd>
+      <dt>Strike</dt><dd>${nf(r.strike,2)}</dd>
+      <dt>Expiry</dt><dd>${esc(r.expiry)} <span class="muted">(${r.dte}d)</span></dd>
+      <dt>Delta</dt><dd>${nf(r.delta,4)}</dd>
+      <dt>Implied vol</dt><dd>${nf(r.iv,2)}%</dd>
+      <dt>Underlying</dt><dd>${nf(r.spot,2)}</dd>
+      <dt>Day move</dt><dd>${(()=>{const m=S.moveBy[r.name]||{};
+        if(m.day_change==null) return "—";
+        const c=m.day_change>0?"up":(m.day_change<0?"down":"flat");
+        const sg=m.day_change>0?"+":"";
+        return `<span class="${c}">${sg}${nf(m.day_change,2)} (${sg}${nf(m.day_pct,2)}%)</span>`;})()}</dd>
+      <dt>Future</dt><dd>${nf(r.future,2)}</dd>
+      <dt>Distance</dt><dd>${r.future?nf((r.strike/r.future-1)*100,2)+"%":"—"}</dd>
+    </dl>
+    <div class="faint" style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;margin-top:16px">Pricing</div>
+    <dl class="kv">
+      <dt>Bid / Ask</dt><dd>${nf(r.bid,2)} / ${nf(r.ask,2)}</dd>
+      <dt>Mid used</dt><dd>${nf(r.mid,2)}</dd>
+      <dt>Last traded</dt><dd>${nf(r.ltp,2)}</dd>
+      <dt>Spread</dt><dd>${r.spread_pct==null?"—":nf(r.spread_pct,2)+"%"}</dd>
+      <dt>Price source</dt><dd style="font-size:11px">${esc(r.px_status||"—")}</dd>
+      <dt>Price quality</dt><dd style="font-size:11px;color:${r.quality==="ok"?"var(--green)":"var(--red)"}">${esc(r.quality||"—")}</dd>
+    </dl>
+    <div class="faint" style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;margin-top:16px">Margin breakdown</div>
+    <dl class="kv">
+      <dt>SPAN</dt><dd>${inr(r.span)}</dd>
+      <dt>Exposure</dt><dd>${inr(r.exposure)}</dd>
+      <dt>Total / lot</dt><dd style="color:var(--accent)">${inr(r.margin)}</dd>
+      <dt>Lot size</dt><dd>${r.lot_size}</dd>
+    </dl>
+    <div class="faint" style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;margin-top:16px">Liquidity</div>
+    <dl class="kv">
+      <dt>Open interest</dt><dd>${(r.oi||0).toLocaleString("en-IN")} <span class="muted">(${nf(r.oi_lots,0)} lots)</span></dd>
+      <dt>Volume today</dt><dd>${(r.volume||0).toLocaleString("en-IN")}</dd>
+      <dt>Flag</dt><dd><span class="chip ${r.liq_flag}"></span> ${esc(r.liq_flag)}</dd>
+    </dl>`;
+  dr.classList.add("open"); document.getElementById("scrim").classList.add("on");
+  document.getElementById("drClose").onclick=closeDrawer;
+}
+function closeDrawer(){
+  document.getElementById("drawer").classList.remove("open");
+  document.getElementById("scrim").classList.remove("on");
+}
+
+/* ---------------- render loop ---------------- */
+async function render(){
+  await ensureIndex();
+  paintControls();
+  const v=document.getElementById("view");
+  const stale=(!EMB && S.session && S.session.ok===false);
+  try{
+    const warn = (stale
+      ? `<div class="banner">Your <b>Kite session has expired</b>, so this data is frozen at the last successful refresh. Click <b>Log in to Kite</b> above to resume live updates.</div>`
+      : "") + staleBanner();
+    if(S.tab==="heatmap")   v.innerHTML=warn+await viewHeatmap();
+    else if(S.tab==="watch")v.innerHTML=warn+await viewWatch();
+    else if(S.tab==="top")  v.innerHTML=warn+await viewTop();
+    else if(S.tab==="chain")v.innerHTML=warn+await viewChain();
+    else                    v.innerHTML=viewAbout();
+  }catch(e){
+    v.innerHTML=`<div class="empty-state"><div class="big">Could not load</div><p>${esc(e.message)}</p></div>`;
+  }
+  v.querySelectorAll("[data-ev]").forEach(el=>el.onclick=()=>openStrategies(el.dataset.ev));
+  v.querySelectorAll("[data-wlrm]").forEach(b=>b.onclick=async e=>{
+    e.stopPropagation();
+    await wlMutate("remove",[b.dataset.wlrm]); render();
+  });
+  const wlc=document.getElementById("wlClear");
+  if(wlc) wlc.onclick=async ()=>{ await wlMutate("clear"); render(); };
+  const wla=document.getElementById("wlAdd");
+  if(wla) wireWatchAdd(wla);
+  v.querySelectorAll(".hint").forEach(h=>h.onclick=()=>h.classList.toggle("expanded"));
+  v.querySelectorAll("th.sortable").forEach(th=>th.onclick=()=>{
+    const c=th.dataset.c;
+    if(S.tab==="heatmap"){ if(S.sortCol===c) S.sortDir*=-1; else {S.sortCol=c; S.sortDir=-1;} }
+    else S.topSort=c;
+    render();
+  });
+  v.querySelectorAll("[data-sym]").forEach(el=>el.onclick=()=>openDrawer(el.dataset.sym));
+  if(S.tab==="heatmap" && S.search.trim()){ await ensureIndex(); applySearchFilter(); }
+  if(S.tab==="about" && !EMB){
+    api("/api/log").then(d=>{const b=document.getElementById("logbox");
+      if(b) {b.textContent=(d.log||[]).slice(-60).join("\n"); b.scrollTop=b.scrollHeight;}}).catch(()=>{});
+  }
+}
+
+async function checkSession(){
+  if(EMB) return;
+  try{
+    const st=await (await fetch("/api/session")).json();
+    S.session=st;
+    const btn=document.getElementById("loginBtn");
+    if(btn) btn.style.display = st.ok ? "none" : "";
+    if(!st.ok){
+      const dot=document.getElementById("mktDot"), txt=document.getElementById("mktText");
+      dot.className="dot err"; txt.textContent="Session expired";
+    }
+  }catch(e){}
+}
+
+function openLogin(){
+  const m=document.getElementById("loginModal");
+  const link=document.getElementById("loginLink");
+  const url=(S.session&&S.session.login_url)||null;
+  if(url){ link.href=url; link.textContent=url; } else { link.textContent="(no API key configured)"; }
+  document.getElementById("loginMsg").textContent="";
+  document.getElementById("loginMsg").className="msg";
+  document.getElementById("loginPaste").value="";
+  m.classList.add("on");
+  setTimeout(()=>document.getElementById("loginPaste").focus(),80);
+}
+function closeLogin(){ document.getElementById("loginModal").classList.remove("on"); }
+async function submitLogin(){
+  const paste=document.getElementById("loginPaste").value.trim();
+  const msg=document.getElementById("loginMsg");
+  if(!paste){ msg.className="msg err"; msg.textContent="Paste the redirect URL first."; return; }
+  const go=document.getElementById("loginGo");
+  go.disabled=true; go.textContent="Connecting…";
+  msg.className="msg"; msg.textContent="Exchanging token…";
+  try{
+    const res=await fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({redirect_url:paste})});
+    const d=await res.json();
+    if(d.ok){
+      msg.className="msg ok";
+      msg.textContent=`Connected as ${d.user} (${d.user_id}). Refreshing data…`;
+      await checkSession(); await refreshSummary();
+      setTimeout(()=>{ closeLogin(); render(); }, 1200);
+    } else {
+      msg.className="msg err"; msg.textContent=d.error||"Login failed.";
+    }
+  }catch(e){ msg.className="msg err"; msg.textContent=String(e); }
+  go.disabled=false; go.textContent="Connect";
+}
+
+async function refreshSummary(){
+  try{
+    S.summary=await api("/api/summary");
+    const had=S.expiry; defaultExpiry(); paintHeader(S.summary);
+    if(!had && S.expiry) render();      // expiries only known after first load
+  }catch(e){}
+}
+
+document.querySelectorAll("nav.tabs button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll("nav.tabs button").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); S.tab=b.dataset.tab; render();
+});
+document.getElementById("scrim").onclick=closeDrawer;
+if(!EMB){
+  document.getElementById("loginBtn").onclick=openLogin;
+  document.getElementById("loginCancel").onclick=closeLogin;
+  document.getElementById("loginGo").onclick=submitLogin;
+  document.getElementById("loginPaste").onkeydown=e=>{ if(e.key==="Enter") submitLogin(); };
+  document.getElementById("loginModal").onclick=e=>{ if(e.target.id==="loginModal") closeLogin(); };
+}
+document.addEventListener("keydown",e=>{if(e.key==="Escape")closeDrawer();});
+document.getElementById("refreshBtn").onclick=async ()=>{
+  if(EMB){ hardReload(); return; }
+  const b=document.getElementById("refreshBtn");
+  b.disabled=true; b.textContent="Refreshing…";
+  try{ await fetch("/api/refresh",{method:"POST"}); }catch(e){}
+  const poll=setInterval(async()=>{
+    await refreshSummary();
+    if(S.summary&&S.summary.runner&&S.summary.runner.status!=="running"){
+      clearInterval(poll); b.disabled=false; b.textContent="Refresh now"; render();
+    }
+  },3000);
+};
+
+function defaultExpiry(){
+  // Nearest expiry is the working default everywhere: it is what you actually
+  // trade, and mixing expiries in one view compares premiums earned over
+  // different numbers of days. "All" stays available in the dropdown.
+  const e=(S.summary&&S.summary.expiries)||[];
+  if(!S.expiry && e.length) S.expiry=e[0];
+}
+
+function hardReload(){
+  // A plain reload can be answered from the browser/CDN cache, which is exactly
+  // the failure this button exists to defeat. A changing query string
+  // guarantees a fresh fetch of the newest deploy.
+  const btn=document.getElementById("refreshBtn");
+  if(btn){ btn.classList.add("spin"); btn.textContent="Loading…"; }
+  const u=new URL(location.href);
+  u.searchParams.set("t", Date.now().toString(36));
+  location.replace(u.toString());
+}
+
+function paintAge(){
+  // The published page cannot refresh itself, so its age is the single most
+  // important thing on it. Colour-coded so a glance is enough.
+  if(!EMB) return;
+  const ts=EMB.data_ts||EMB.generated_at;
+  const pill=document.getElementById("stampPill");
+  const el=document.getElementById("stamp");
+  if(!ts||!el) return;
+  const mins=(Date.now()-new Date(ts).getTime())/60000;
+  el.textContent=timeAgo(ts);
+  if(pill){
+    pill.className="pill age " + (mins<8?"fresh":(mins<20?"aging":"old"));
+    pill.title="Data captured "+String(ts).replace("T"," ").slice(0,16)+" IST";
+  }
+}
+
+(async function init(){
+  if(EMB){
+    const btn=document.getElementById("refreshBtn");
+    btn.textContent="Refresh";
+    btn.title="Fetch the latest published snapshot, bypassing any cache";
+    S.summary=EMB.summary; paintHeader(S.summary); defaultExpiry();
+    paintAge();
+    setInterval(paintAge, 15000);
+
+    // Auto-pull the newest deploy while the market is open, but never yank the
+    // page out from under someone who is reading or mid-interaction.
+    let lastTouch=Date.now();
+    ["click","keydown","touchstart","scroll"].forEach(ev=>
+      window.addEventListener(ev, ()=>{lastTouch=Date.now();}, {passive:true}));
+    setInterval(()=>{
+      const m=(EMB.summary&&EMB.summary.market)||{};
+      const ts=EMB.data_ts||EMB.generated_at;
+      if(!m.open || !ts) return;
+      const ageMin=(Date.now()-new Date(ts).getTime())/60000;
+      const idleSec=(Date.now()-lastTouch)/1000;
+      const busy=document.querySelector(".drawer.open, .modal.on");
+      if(ageMin>=5 && idleSec>45 && !busy) hardReload();
+    }, 30000);
+  } else {
+    await refreshSummary();
+    defaultExpiry();
+    await checkSession();
+    setInterval(refreshSummary,5000);
+    setInterval(checkSession,60000);
+    let lastRun=null;
+    setInterval(async()=>{
+      const prev=lastRun;
+      lastRun=S.summary&&S.summary.snapshot?S.summary.snapshot.ts:null;
+      if(prev&&lastRun&&prev!==lastRun) render();       // auto-repaint on new data
+    },7000);
+  }
+  await render();
+})();
+</script>
+</body>
+</html>
