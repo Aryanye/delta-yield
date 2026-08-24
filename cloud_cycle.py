@@ -120,18 +120,42 @@ def check_vercel_token() -> None:
     log(f"vercel token ok for project {info.get('name')}")
 
 
+def _strategy_age_seconds():
+    """Seconds since structures were last priced, or None if never."""
+    from datetime import datetime as _dt
+    try:
+        rows = db.read_strategies()
+        stamps = [r.get("computed_at") for r in rows if r.get("computed_at")]
+        if not stamps:
+            return None
+        return (_dt.now() - _dt.fromisoformat(max(stamps))).total_seconds()
+    except Exception:
+        return None
+
+
 def one_cycle(kite, uni) -> None:
     """Collect, price structures, render and deploy exactly once."""
     from collector import collect
     result = collect(kite, uni, log=log)
     log(f"collected {result['rows']} rows, {result['margined']} with margin")
 
+    # Structures were being re-priced on EVERY cycle, adding ~80-100s to a
+    # ~155s collection. That left barely 50s of slack against the 300s interval,
+    # so any hiccup pushed the published cadence past 5 minutes. Option
+    # structures do not need 5-minute freshness -- the strikes and margins move
+    # slowly -- so re-price them on their own, longer clock.
     expiry = (queries.expiries_list() or [None])[0]
     if expiry and os.environ.get("SKIP_STRATEGIES") != "1":
-        strategies.precompute(
-            kite, expiry, log=log,
-            limit=int(os.environ.get("STRATEGY_LIMIT", config.STRATEGY_STOCK_LIMIT)),
-            budget_seconds=float(os.environ.get("STRATEGY_BUDGET", 120)))
+        stale_after = float(os.environ.get("STRATEGY_REFRESH_SECONDS", 900))
+        age = _strategy_age_seconds()
+        if age is None or age > stale_after:
+            strategies.precompute(
+                kite, expiry, log=log,
+                limit=int(os.environ.get("STRATEGY_LIMIT", config.STRATEGY_STOCK_LIMIT)),
+                budget_seconds=float(os.environ.get("STRATEGY_BUDGET", 120)))
+        else:
+            log(f"structures are {age:.0f}s old — reusing (refresh every "
+                f"{stale_after:.0f}s)")
 
     config.PUBLISH_DIR.mkdir(exist_ok=True)
     publish.render(config.PUBLISH_DIR / "index.html", session_ok=True, fragment=False)
