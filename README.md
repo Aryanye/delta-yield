@@ -107,6 +107,21 @@ You can also push it by hand at any time:
 ./push_token.sh
 ```
 
+### If the page updates slowly, check the token secret first
+
+The most likely cause is that the **cloud is running yesterday's Kite token**.
+It then fails every cycle, the Mac's gap-filler becomes the only publisher, and
+the cadence stretches to the gap-fill interval instead of 5 minutes.
+
+```bash
+python3 -c "import json,config;print(json.loads(config.TOKEN_PATH.read_text())['created_at'])"
+gh api /repos/Aryanye/delta-yield/actions/secrets/KITE_ACCESS_TOKEN --jq .updated_at
+```
+
+If the secret is older than the local token, run `./push_token.sh`. The server
+now watches the cached token and relays within 60 seconds of any change, so this
+should not recur — but it is the first thing to check.
+
 ### The Vercel deploy token
 
 The cloud runner needs a **personal API token** (`vcp_…`), created at
