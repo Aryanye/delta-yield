@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlparse
 from kiteconnect import KiteConnect
 
 import config
+import shared_token          # one daily Kite login shared with the live algos
 
 
 def extract_request_token(text: str) -> str:
@@ -39,6 +40,9 @@ def _save_token(api_key: str, access_token: str) -> None:
         "created_at": datetime.now().isoformat(timespec="seconds"),
     }, indent=2))
     config.TOKEN_PATH.chmod(0o600)
+    # Share it: one Kite app + one account = one token, so logging in here also
+    # signs in the live algos (and vice versa — see the candidates in get_kite).
+    shared_token.publish(api_key, access_token, source="deltayield")
 
 
 def _load_token(api_key: str) -> Optional[str]:
@@ -71,7 +75,10 @@ def get_kite(interactive: bool = False) -> KiteConnect:
 
     kite = KiteConnect(api_key=api_key)
 
-    for token in (env.get("KITE_ACCESS_TOKEN"), _load_token(api_key)):
+    # Shared store first: it holds the most recent login done by ANY algo on this
+    # machine, and Kite invalidates every token minted before it.
+    for token in (shared_token.read(api_key), env.get("KITE_ACCESS_TOKEN"),
+                  _load_token(api_key)):
         if not token:
             continue
         kite.set_access_token(token)
@@ -104,7 +111,44 @@ def get_kite(interactive: bool = False) -> KiteConnect:
     profile = kite.profile()
     print(f"\nLogged in as {profile.get('user_name')} ({profile.get('user_id')}).")
     print(f"Token cached to {config.TOKEN_PATH} -- valid until tomorrow morning.")
+
+    # Hand it straight to the cloud runner. Without this, signing in from the
+    # terminal left the cloud on yesterday's token.
+    script = config.BASE_DIR / "push_token.sh"
+    if script.exists():
+        import subprocess
+        try:
+            r = subprocess.run(["/bin/bash", str(script)], capture_output=True,
+                               text=True, timeout=90)
+            print((r.stdout or r.stderr).strip()[:200])
+        except Exception as exc:
+            print(f"Could not relay the token to the cloud: {type(exc).__name__}")
     return kite
+
+
+def client_from_shared_token() -> Optional[tuple]:
+    """(KiteConnect, token) built from a token another algo published, or None.
+
+    This is how a login done on the motherbot (or any algo's bot) reaches the
+    running scanner: no browser round-trip, no restart — the caller just swaps
+    the client in. Validated with one profile() call so a dead token is never
+    installed over a live one.
+    """
+    env = config.load_env()
+    api_key = env.get("KITE_API_KEY")
+    if not api_key:
+        return None
+    token = shared_token.read(api_key)
+    if not token:
+        return None
+    kite = KiteConnect(api_key=api_key)
+    kite.set_access_token(token)
+    try:
+        kite.profile()
+    except Exception:
+        return None
+    _save_token(api_key, token)
+    return kite, token
 
 
 def login_url() -> str:
@@ -164,7 +208,8 @@ def session_status() -> dict:
         api_key = env.get("KITE_API_KEY")
         if not api_key:
             return {"ok": False, "reason": "no_credentials"}
-        token = env.get("KITE_ACCESS_TOKEN") or _load_token(api_key)
+        token = (shared_token.read(api_key) or env.get("KITE_ACCESS_TOKEN")
+                 or _load_token(api_key))
         if not token:
             return {"ok": False, "reason": "no_token"}
         kite = KiteConnect(api_key=api_key)

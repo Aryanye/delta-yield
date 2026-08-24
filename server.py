@@ -137,6 +137,41 @@ def relay_token_to_cloud() -> None:
         log(f"token relay failed: {type(exc).__name__}: {str(exc)[:80]}")
 
 
+def _token_fingerprint() -> str:
+    """Hash of the cached access token, so we can tell when it changes."""
+    import hashlib
+    try:
+        blob = json.loads(config.TOKEN_PATH.read_text())
+        return hashlib.sha256(blob.get("access_token", "").encode()).hexdigest()
+    except Exception:
+        return ""
+
+
+def token_relay_watcher() -> None:
+    """Relay the token to the cloud whenever it changes, by ANY route.
+
+    The relay used to hang off the dashboard's login handlers only. Sign in with
+    `python3 auth.py` instead and the cloud kept the previous day's token: it
+    died on TokenException, the Mac's gap-filler became the only publisher, and
+    the page updated on the gap-fill interval rather than the real cadence.
+    Watching the token file catches every path -- dashboard, terminal, or a
+    token dropped in by hand.
+    """
+    marker = config.DATA_DIR / "last_relayed.txt"
+    while True:
+        try:
+            fp = _token_fingerprint()
+            if fp:
+                last = marker.read_text().strip() if marker.exists() else ""
+                if fp != last:
+                    log("cached Kite token changed — relaying to the cloud")
+                    relay_token_to_cloud()
+                    marker.write_text(fp)
+        except Exception as exc:
+            log(f"token watcher error: {type(exc).__name__}: {str(exc)[:70]}")
+        time.sleep(60)
+
+
 def precompute_strategies(kite) -> None:
     """Price the structure menu in the background, off the data cycle.
 
@@ -258,6 +293,33 @@ def publish_public(force: bool = False, session_ok: bool = True) -> None:
         PUBLISH_LOCK.release()
 
 
+def adopt_shared_token(httpd) -> bool:
+    """Pick up a Kite login done elsewhere (motherbot, or any algo's bot).
+
+    The scanner's own sign-in paths hot-swap httpd.kite themselves; this covers
+    the case where somebody signed in somewhere else entirely, so the daily login
+    only ever has to happen once.
+    """
+    current = getattr(httpd, "kite_token", None)
+    try:
+        found = auth.client_from_shared_token()
+    except Exception as exc:
+        log(f"shared-token check failed: {type(exc).__name__}: {exc}")
+        return False
+    if not found:
+        return False
+    kite, token = found
+    if token == current and httpd.kite is not None:
+        return False
+    httpd.kite = kite
+    httpd.kite_token = token
+    with STATE_LOCK:
+        STATE.update(auth_expired=False, auth_nudged=False)
+    who = auth.session_status()
+    log(f"adopted a shared Kite token — signed in as {who.get('user')}")
+    return True
+
+
 def scheduler(httpd, uni, force_once: bool = True) -> None:
     """Refresh every REFRESH_SECONDS during market hours.
 
@@ -266,10 +328,12 @@ def scheduler(httpd, uni, force_once: bool = True) -> None:
     """
     if force_once:
         log("running an initial cycle at startup ...")
+        adopt_shared_token(httpd)
         run_cycle(httpd.kite, uni)
 
     while True:
         started = time.time()
+        adopt_shared_token(httpd)
         mkt = queries.market_status()
         if mkt["open"]:
             run_cycle(httpd.kite, uni)
@@ -448,6 +512,7 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     kite = auth.complete_login(token)
                     self.server.kite = kite
+                    self.server.kite_token = getattr(kite, "access_token", None)
                     was_expired = False
                     with STATE_LOCK:
                         was_expired = STATE["auth_expired"]
@@ -498,6 +563,7 @@ class Handler(BaseHTTPRequestHandler):
         route = urlparse(self.path).path
         if route == "/api/refresh":
             uni = self.server.universe
+            adopt_shared_token(self.server)
             threading.Thread(target=run_cycle, args=(self.server.kite, uni),
                              daemon=True).start()
             return self._json({"triggered": True})
@@ -549,6 +615,7 @@ class Handler(BaseHTTPRequestHandler):
                 # Hot-swap the client so the running scheduler picks it up
                 # without a restart -- the whole point of logging in from here.
                 self.server.kite = kite
+                self.server.kite_token = getattr(kite, "access_token", None)
                 who = auth.session_status()
                 log(f"logged in as {who.get('user')} ({who.get('user_id')}) via dashboard")
                 threading.Thread(target=run_cycle,
@@ -624,6 +691,7 @@ def main() -> None:
     threading.Thread(target=scheduler, args=(httpd, uni, kite is not None),
                      daemon=True).start()
     threading.Thread(target=strategy_loop, args=(httpd,), daemon=True).start()
+    threading.Thread(target=token_relay_watcher, daemon=True).start()
 
     url = f"http://{config.SERVER_HOST}:{config.SERVER_PORT}"
     log(f"dashboard live at {url}")
