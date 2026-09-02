@@ -74,6 +74,46 @@ run a login shell and this machine has no bash profile, so without that the
 data cycles would run but every Vercel deploy would fail with
 "vercel CLI not found".
 
+## Two clocks: 15-second ticks, 5-minute sweeps
+
+The dashboard updates on two independent schedules, because its two halves cost
+wildly different amounts.
+
+| | Every 15 seconds | Every 5 minutes |
+|---|---|---|
+| What | Premium, IV, delta, yield, spot for the contracts **on screen** | The full sweep: ~9,000 contracts, exact per-lot margins, structures, events |
+| Cost | ~190 instruments, 1 Kite call, ~575 ms | ~24,000 quotes + ~8,600 margin calls, ~155 s |
+| Where | `api/live.js` (serverless) or `/api/live` locally | GitHub Actions loop |
+
+Why the split: Kite's quote endpoint is 1 request/second and the margin endpoint
+10/second, so a *full* refresh cannot beat ~155 seconds no matter what. But
+margins move only a few times a day while premiums move every tick — so the
+browser re-quotes the visible contracts, recomputes Black-76 IV → delta → yield
+against the **cached** margin, and repaints. Same idea as a live-positions
+panel: cheap things on a short clock, expensive things on a long one.
+
+The recompute was verified against `pricing.py`: max IV error 1.0e-6, max delta
+error 5.8e-7, and it reproduces published yields exactly when the inputs have
+not changed.
+
+**Scoped to the viewport.** Only cells within ~700px of the fold are quoted, so
+a tick costs 192 instruments rather than 1,900 and finishes in ~575 ms instead
+of ~6 s. Scrolling refreshes newly-revealed rows once the scroll settles.
+
+It stands down when it should: outside market hours, while a drawer or dialog is
+open, and — locally — while a collection cycle holds the lock, since both would
+compete for the same Kite quote limit. Errors back off rather than hammer, and
+the endpoint serves its last good payload if a tick collides with the collector.
+
+### The token for live ticks
+
+`api/live.js` reads `KITE_ACCESS_TOKEN` from the Vercel project env.
+`./push_token.sh` now updates three places from one command — the GitHub Actions
+secret, the Vercel env, and (via the server's watcher) whatever route you used
+to sign in. Vercel env changes apply on the **next deploy**, which the 5-minute
+loop provides, so live ticks resume within about five minutes of your morning
+sign-in.
+
 ## Where it runs
 
 The published dashboard is produced by **GitHub Actions**, not by this Mac. The
