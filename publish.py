@@ -229,6 +229,18 @@ def render(out_path: Optional[Path] = None,
     except Exception:
         pass
 
+    # Ship the live-quote function beside the page. Vercel turns api/*.js into
+    # a serverless endpoint automatically; the local server exposes the same
+    # route itself, so the page code is identical in both modes.
+    try:
+        fn_src = config.BASE_DIR / "vercel_api" / "live.js"
+        if fn_src.exists():
+            api_dir = out_path.parent / "api"
+            api_dir.mkdir(exist_ok=True)
+            (api_dir / "live.js").write_text(fn_src.read_text())
+    except Exception:
+        pass
+
     size_mb = out_path.stat().st_size / 1e6
     print(f"snapshot written: {out_path}")
     print(f"  {len(snap['rows']):,} contracts · {len(snap['stocks'])} stocks · {size_mb:.2f} MB")

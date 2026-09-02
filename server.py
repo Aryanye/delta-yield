@@ -573,6 +573,44 @@ class Handler(BaseHTTPRequestHandler):
                              daemon=True).start()
             return self._json({"triggered": True})
 
+        if route == "/api/live":
+            # Same contract as vercel_api/live.js. Refuses while a collection
+            # cycle is running: both would hit Kite's 1 req/s quote limit and
+            # the collector matters more than a 15-second tick.
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                payload = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                return self._json({"error": "bad request body"}, 400)
+            if self.server.kite is None:
+                return self._json({"error": "auth"})
+            if RUN_LOCK.locked():
+                return self._json({"error": "busy"})
+            inst = [s for s in (payload.get("i") or []) if isinstance(s, str)][:2000]
+            if not inst:
+                return self._json({"error": "empty"})
+            out = {}
+            try:
+                for i in range(0, len(inst), 500):
+                    if i:
+                        time.sleep(1.05)
+                    data = self.server.kite.quote(inst[i:i + 500])
+                    for k, v in data.items():
+                        d = v.get("depth") or {}
+                        buy, sell = d.get("buy") or [], d.get("sell") or []
+                        o = v.get("ohlc") or {}
+                        out[k] = {"l": float(v.get("last_price") or 0),
+                                  "b": float(buy[0]["price"]) if buy else 0.0,
+                                  "a": float(sell[0]["price"]) if sell else 0.0,
+                                  "oi": int(v.get("oi") or 0),
+                                  "c": float(o.get("close") or 0),
+                                  "v": int(v.get("volume") or 0)}
+            except Exception as exc:
+                code = "auth" if "Token" in type(exc).__name__ else "kite"
+                return self._json({"error": code, "detail": str(exc)[:100]})
+            return self._json({"ts": datetime.now(pricing.IST).isoformat(timespec="seconds"),
+                               "n": len(out), "q": out})
+
         if route == "/api/watchlist":
             try:
                 length = int(self.headers.get("Content-Length") or 0)

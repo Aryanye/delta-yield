@@ -782,6 +782,185 @@ function paintControls(){
   }
 }
 
+/* ---------------- live tier ----------------
+   Two clocks. The 5-minute publish carries the expensive parts: exact per-lot
+   margins for 8,600 contracts, structures, events. This tier re-quotes only the
+   ~1,300 contracts currently on screen (plus their futures and spots) every
+   15 seconds and recomputes IV -> delta -> yield in the browser against the
+   cached margin. Margins move a few times a day; premiums move every tick. */
+const LIVE_INTERVAL_MS=15000;
+const RFR=0.065, IV_MIN=0.01, IV_MAX=5.0;
+function erf(x){ // Abramowitz-Stegun 7.1.26, |err| < 1.5e-7
+  const sg=x<0?-1:1; x=Math.abs(x);
+  const t=1/(1+0.3275911*x);
+  const y=1-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-0.284496736)*t+0.254829592)*t*Math.exp(-x*x);
+  return sg*y;
+}
+const ncdf=x=>0.5*(1+erf(x/Math.SQRT2));
+function b76(F,K,T,sig,ot){
+  if(T<=0||sig<=0||F<=0||K<=0){
+    const intr=ot==="CE"?Math.max(F-K,0):Math.max(K-F,0);
+    return intr*Math.exp(-RFR*Math.max(T,0));
+  }
+  const st=Math.sqrt(T), d1=(Math.log(F/K)+0.5*sig*sig*T)/(sig*st), d2=d1-sig*st, disc=Math.exp(-RFR*T);
+  return ot==="CE"?disc*(F*ncdf(d1)-K*ncdf(d2)):disc*(K*ncdf(-d2)-F*ncdf(-d1));
+}
+function impliedVol(px,F,K,T,ot){
+  if(T<=0||!(px>0)||!(F>0)||!(K>0)) return null;
+  const disc=Math.exp(-RFR*T);
+  const intr=disc*(ot==="CE"?Math.max(F-K,0):Math.max(K-F,0));
+  if(px<=intr+1e-9) return null;                 // below intrinsic: stale/crossed book
+  if(px>=b76(F,K,T,IV_MAX,ot)) return IV_MAX;
+  let lo=IV_MIN, hi=IV_MAX;
+  if(px<=b76(F,K,T,lo,ot)) return lo;
+  for(let i=0;i<70;i++){ const m=0.5*(lo+hi); if(b76(F,K,T,m,ot)<px) lo=m; else hi=m; if(hi-lo<1e-7) break; }
+  return 0.5*(lo+hi);
+}
+function deltaOf(F,K,T,iv,ot){
+  const st=Math.sqrt(T), d1=(Math.log(F/K)+0.5*iv*iv*T)/(iv*st), disc=Math.exp(-RFR*T);
+  return ot==="CE"?disc*ncdf(d1):-disc*ncdf(-d1);
+}
+function yearsToExpiry(expiry){          // 15:30 IST on the expiry date
+  const [y,m,d]=expiry.split("-").map(Number);
+  const exp=Date.UTC(y,m-1,d,10,0,0);      // 15:30 IST == 10:00 UTC
+  return Math.max(exp-Date.now(),0)/(365*24*3600*1000);
+}
+function futSymbol(name, expiry){         // RELIANCE + 2026-08-25 -> NFO:RELIANCE26AUGFUT
+  const [y,m]=expiry.split("-");
+  const mon=["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"][+m-1];
+  return `NFO:${name}${y.slice(2)}${mon}FUT`;
+}
+function marketOpenNow(){
+  const now=new Date(), ist=new Date(now.getTime()+(now.getTimezoneOffset()+330)*60000);
+  const mins=ist.getHours()*60+ist.getMinutes();
+  return ist.getDay()>=1 && ist.getDay()<=5 && mins>=555 && mins<=930;
+}
+
+// What is actually ON SCREEN right now, with everything needed to reprice it.
+//
+// Scoped to the viewport rather than the whole table. Re-quoting all ~1,540
+// heatmap cells took ~6s per tick -- uncomfortably close to the serverless
+// function's 10s ceiling, and 4 Kite calls (each paced 1s apart) for rows
+// nobody is looking at. You can see ~20 rows at a time; those are what must
+// tick. Scrolling brings new rows into range and the next tick picks them up.
+const LIVE_VIEWPORT_MARGIN=700;   // px above/below the fold, so a small scroll is already fresh
+const LIVE_MAX_INSTRUMENTS=700;
+
+function liveTargets(){
+  const meta={}, futs=new Set(), eqs=new Set();
+  const byRow={};
+  ((S.tab==="heatmap"||S.tab==="watch")
+      ? ((S.heatmap&&S.heatmap.stocks)||[]).flatMap(s=>Object.values(s.buckets))
+      : (S.tab==="top" ? (S.top||[]) : []))
+    .forEach(c=>{ if(c&&c.tradingsymbol) byRow[c.tradingsymbol]=c; });
+  if(!Object.keys(byRow).length) return null;
+
+  // Only elements currently rendered near the fold.
+  const vh=window.innerHeight||800;
+  const seen=new Set();
+  document.querySelectorAll("[data-sym]").forEach(el=>{
+    const r=el.getBoundingClientRect();
+    if(r.bottom < -LIVE_VIEWPORT_MARGIN || r.top > vh+LIVE_VIEWPORT_MARGIN) return;
+    const sym=el.dataset.sym; if(!sym || seen.has(sym)) return;
+    const c=byRow[sym]; if(!c || !c.margin) return;
+    seen.add(sym);
+    meta[sym]={strike:c.strike, ot:c.opt_type, expiry:c.expiry, lot:c.lot_size,
+               margin:c.margin, name:c.name};
+    futs.add(futSymbol(c.name,c.expiry)); eqs.add("NSE:"+c.name);
+  });
+  const syms=Object.keys(meta);
+  if(!syms.length) return null;
+  return {meta, i:[...syms.map(x=>"NFO:"+x), ...futs, ...eqs].slice(0,LIVE_MAX_INSTRUMENTS)};
+}
+
+let liveState={timer:null, backoff:0, lastOk:null, ticks:0};
+function paintLiveStamp(ok, note){
+  const el=document.getElementById("stamp"), pill=document.getElementById("stampPill");
+  if(!el) return;
+  if(ok){ el.textContent="live · "+new Date().toLocaleTimeString("en-IN",{hour12:false}); if(pill) pill.className="pill age fresh"; }
+  else if(note){ el.textContent=note; if(pill) pill.className="pill age aging"; }
+}
+
+async function liveTick(){
+  if(!marketOpenNow()) return;
+  const busy=document.querySelector(".drawer.open, .modal.on");
+  if(busy) return;
+  const t=liveTargets(); if(!t) return;
+  let d;
+  try{
+    const res=await fetch("api/live",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({i:t.i})});
+    d=await res.json();
+  }catch(e){ liveState.backoff=Math.min(liveState.backoff+1,4); return; }
+  if(!d||d.error){
+    // auth = token not yet propagated; busy = local collector running. Both
+    // are transient; back off rather than hammer.
+    liveState.backoff=Math.min(liveState.backoff+1,4);
+    if(d&&d.error==="auth") paintLiveStamp(false,"live paused · token");
+    return;
+  }
+  liveState.backoff=0; liveState.ticks++; liveState.lastOk=Date.now();
+  const q=d.q||{};
+  let touched=0;
+
+  // 1. Yield cells (heatmap / watch list)
+  document.querySelectorAll("td.heat[data-sym]").forEach(td=>{
+    const m=t.meta[td.dataset.sym]; if(!m) return;
+    const o=q["NFO:"+td.dataset.sym]; const f=q[futSymbol(m.name,m.expiry)];
+    if(!o||!f||!(f.l>0)) return;
+    const mid=(o.b>0&&o.a>0&&o.a>=o.b)?(o.b+o.a)/2:(o.l>0?o.l:0);
+    if(!(mid>0)) return;
+    const T=yearsToExpiry(m.expiry); const iv=impliedVol(mid,f.l,m.strike,T,m.ot);
+    if(iv==null) return;
+    const dl=Math.abs(deltaOf(f.l,m.strike,T,iv,m.ot));
+    const y=mid*m.lot/m.margin*100;
+    const bk=td.dataset.bk;
+    const [lo,hi]=(S.heatScale==="column"&&S.liveScale&&S.liveScale.col[bk])?S.liveScale.col[bk]:(S.liveScale?S.liveScale.all:[0,10]);
+    td.textContent=nf(y,2);
+    td.style.background=heatColor(y,lo,hi); td.style.color=heatInk(y,lo,hi);
+    td.title=`${td.dataset.sym} · Δ${nf(dl,3)} · IV ${nf(iv*100,1)}% · ${inr(m.margin)}/lot · live`;
+    touched++;
+  });
+
+  // 2. Opportunities rows
+  document.querySelectorAll('tr[data-sym] td[data-label="Yield %"]').forEach(td=>{
+    const tr=td.closest("tr"); const m=t.meta[tr.dataset.sym]; if(!m) return;
+    const o=q["NFO:"+tr.dataset.sym]; const f=q[futSymbol(m.name,m.expiry)];
+    if(!o||!f||!(f.l>0)) return;
+    const mid=(o.b>0&&o.a>0&&o.a>=o.b)?(o.b+o.a)/2:(o.l>0?o.l:0); if(!(mid>0)) return;
+    const T=yearsToExpiry(m.expiry); const iv=impliedVol(mid,f.l,m.strike,T,m.ot); if(iv==null) return;
+    const dl=Math.abs(deltaOf(f.l,m.strike,T,iv,m.ot));
+    td.textContent=nf(mid*m.lot/m.margin*100,2);
+    const dc=tr.querySelector('td[data-label="Delta"]'); if(dc) dc.textContent=nf(dl,3);
+    const pc=tr.querySelector('td[data-label="Premium"]'); if(pc) pc.textContent=nf(mid,2);
+    const ic=tr.querySelector('td[data-label="IV %"]'); if(ic) ic.textContent=nf(iv*100,1);
+    touched++;
+  });
+
+  // 3. Spot + day move under each ticker
+  document.querySelectorAll("tr[data-name]").forEach(tr=>{
+    const e=q["NSE:"+tr.dataset.name]; if(!e||!(e.l>0)) return;
+    const chg=e.c>0?e.l-e.c:null, pct=e.c>0?(e.l-e.c)/e.c*100:null;
+    S.moveBy[tr.dataset.name]={spot:e.l, day_change:chg, day_pct:pct};
+    const px=tr.querySelector(".px"); const html=moveHtml(e.l,chg,pct);
+    if(px&&html) px.outerHTML=html;
+  });
+
+  if(touched) paintLiveStamp(true);
+}
+function startLive(){
+  if(liveState.timer) clearInterval(liveState.timer);
+  const run=()=>{ if(liveState.backoff>0 && (liveState.ticks%(liveState.backoff+1))!==0){ liveState.ticks++; return; } liveTick(); };
+  liveState.timer=setInterval(run, LIVE_INTERVAL_MS);
+  setTimeout(liveTick, 2500);
+  // Scrolling reveals rows that were outside the quoted set; refresh them once
+  // the scroll settles rather than waiting up to 15s.
+  let scrollT=null;
+  window.addEventListener("scroll", ()=>{
+    clearTimeout(scrollT); scrollT=setTimeout(liveTick, 900);
+  }, {passive:true});
+}
+
 /* ---------------- events ---------------- */
 async function loadEvents(){
   if(S.events) return S.events;
@@ -1112,6 +1291,7 @@ async function viewHeatmap(){
     colScale[k]=v.length?[quantile(v,0.05),quantile(v,0.95)]:[lo,hi];
   });
   const scaleFor=k=>S.heatScale==="column"?colScale[k]:[lo,hi];
+  S.liveScale={col:colScale, all:[lo,hi]};
 
   const rows=[...d.stocks].sort((a,b)=>{
     let x,y;
@@ -1140,7 +1320,7 @@ async function viewHeatmap(){
       const [clo,chi]=scaleFor(k);
       const bg=heatColor(c.return_pct,clo,chi);
       return `<td class="heat" style="background:${bg};color:${heatInk(c.return_pct,clo,chi)}"
-        data-sym="${esc(c.tradingsymbol)}" title="${esc(c.tradingsymbol)} · Δ${nf(c.abs_delta,3)} · ${inr(c.margin)}/lot">
+        data-sym="${esc(c.tradingsymbol)}" data-bk="${k}" title="${esc(c.tradingsymbol)} · Δ${nf(c.abs_delta,3)} · ${inr(c.margin)}/lot">
         ${nf(c.return_pct,2)}</td>`;
     }).join("");
     return `<tr data-name="${esc(s.name)}">
@@ -1664,12 +1844,14 @@ function paintAge(){
     }
     setInterval(checkForNewData, 30000);
     setTimeout(checkForNewData, 3000);
+    startLive();
   } else {
     await refreshSummary();
     defaultExpiry();
     await checkSession();
     setInterval(refreshSummary,5000);
     setInterval(checkSession,60000);
+    startLive();
     let lastRun=null;
     setInterval(async()=>{
       const prev=lastRun;
